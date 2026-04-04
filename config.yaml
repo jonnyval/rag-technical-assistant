@@ -1,0 +1,86 @@
+# ==========================================
+# ⚙️ ОСНОВНЫЕ НАСТРОЙКИ RAG СИСТЕМЫ
+# ==========================================
+llm:
+  active: "groq" # Доступные варианты: "groq", "gigachat", "gemini"
+
+# 🎯 Базы данных
+databases:
+  active: "qdrant_v1"  # Указываем Qdrant как базу по умолчанию
+ 
+  v3_unified:
+    path: "data/vector_dbs/chroma_db_unified_master_v3"
+    collection: "reglab_tech_docs"
+    bm25_cache: "data/bm25_caches/bm25_cache_v3.pkl"
+
+  v2_unified:
+    path: "data/vector_dbs/chroma_db_unified_master_v2"
+    collection: "reglab_tech_docs"
+    bm25_cache: "data/bm25_caches/bm25_cache_v2.pkl"
+
+  v5_unified_qwen:
+    path: "data/vector_dbs/chroma_db_unified_v5_qwen3"
+    collection: "reglab_tech_docs"
+    bm25_cache: "data/bm25_caches/bm25_cache_v5.pkl"
+
+  qdrant_v1:
+    path: "data/vector_dbs/qdrant_v1_qwen3_hybrid"
+    parent_store: "data/vector_dbs/qdrant_v1_qwen3_hybrid/parent_docstore"
+    collection: "tech_docs_reglab"
+
+# 🐛 Настройки отладки и профилирования
+debug:
+  enable_profiling: true  # Поставьте false, чтобы полностью отключить таймеры
+
+# 🧠 Модели поиска
+models:
+  active_embedding: "qwen3"      # Переключились на Qwen3
+  active_reranker: "bge_v2_m3"   # Какой реранкер использовать
+  device: "cuda"                 # cuda или cpu
+
+  # Список доступных эмбеддинг-моделей
+  embeddings:
+    bge_m3: "BAAI/bge-m3"
+    qwen3: "Qwen/Qwen3-Embedding-0.6B"
+    e5_large: "intfloat/multilingual-e5-large"
+
+  # Список доступных моделей реранжирования
+  rerankers:
+    bge_base: "BAAI/bge-reranker-base"
+    bge_large: "BAAI/bge-reranker-large"
+    bge_v2_m3: "BAAI/bge-reranker-v2-m3"
+
+# 🔍 Настройки Retrieval (Поиска)
+retrieval:
+  top_k_retrieval: 50
+  top_k_final: 2
+  rerank_threshold: 0.05
+  use_litm: true
+
+# ✂️ Настройки Parent-Child чанкинга (для Qdrant)
+chunking_parents_child:
+  child_chunk_size: 400      # Размер куска для векторного поиска
+  child_chunk_overlap: 50    # Небольшое перекрытие для детей
+
+# ✂️ Настройки классического чанкинга (оставлено для совместимости)
+chunking:
+  max_chunk_size: 2000
+  chunk_overlap: 200
+
+# 📁 Пути к исходным данным и кэшам
+paths:
+  images_out_dir: "data/persistent_images"
+  hash_registry: "data/file_hashes_qdrant.json"
+  bm25_cache: "C:/Users/e.valov/testt/db_chroma/chroma_db_unified_master_v3/bm25_cache_unified_v3.pkl"
+  docs_base_urls:
+    r500_html: "https://reglab.ru/upload/materialy-kursa/"
+    astraregul_html: "https://reglab.ru/upload/rukovodstvo-polzovatelya/"
+  
+  # Директории с документацией по типам
+  source_dirs:
+    metod_docx: "data/source_docs/docs_word/metod"
+    r500_docx: "data/source_docs/docs_word/R500"
+    r500s_docx: "data/source_docs/docs_word/r500s"
+    astraregul_docx: "data/source_docs/docs_word/astraregul"
+    # r500_html: "data/source_docs/docs_html/RX00 HTML"
+    # astraregul_html: "data/source_docs/docs_html/Astra.Documentation"

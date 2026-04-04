@@ -1,0 +1,32 @@
+# Виртуальные окружения
+venv/
+.venv/
+new_ml_env/
+rag_langchain/
+
+# Конфиденциальные настройки и ключи (Groq, GigaChat, Gemini)
+.env
+.env.local
+
+# Локальные базы данных и кэш
+data/
+
+
+chroma_db/
+bm25_cache/
+*.sqlite3
+
+result_test_hands/
+# Кэш Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE и среды разработки
+.vscode/
+.idea/
+.ipynb_checkpoints/
+
+# Временные файлы операционной системы
+.DS_Store
+Thumbs.db

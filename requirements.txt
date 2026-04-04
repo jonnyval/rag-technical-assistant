@@ -1,0 +1,40 @@
+# === Базовый фреймворк LangChain и его интеграции ===
+langchain
+langchain-core
+langchain-openai         # Для подключения к Groq (использует OpenAI-совместимый API)
+langchain-google-genai   # Для Gemini
+langchain-gigachat       # Для GigaChat
+langchain-huggingface    # Для локальных эмбеддингов
+langchain-chroma         # Интеграция ChromaDB в LangChain
+langchain-text-splitters # Для нарезки текста (RecursiveCharacterTextSplitter)
+
+# === Векторная база данных ===
+chromadb                 #
+
+# === ML модели и реранжирование ===
+sentence-transformers    # Для моделей BGE-m3 и CrossEncoder
+
+
+# === Лексический поиск (BM25) и NLP ===
+rank-bm25                # Сам алгоритм BM25
+nltk                     # Для токенизации текста
+pymorphy3                # Для лемматизации русских слов
+numpy                    # Математические операции
+
+# === Парсинг документов ===
+mammoth                  # Для умного парсинга DOCX с сохранением стилей
+beautifulsoup4           # Для очистки и парсинга HTML
+
+# === Пользовательский интерфейс ===
+streamlit                # Для запуска app.py
+
+# === Утилиты и конфигурация ===
+python-dotenv            # Для загрузки секретов из .env
+PyYAML                   # Для чтения config.yaml
+tqdm                     # Прогресс-бары в скрипте загрузки
+requests                 # Для прямых HTTP-запросов (скрипт проверки API)
+pydantic                 # Валидация данных и создание SGR-схем
+
+# === Прямые API клиенты (для скрипта check_models.py) ===
+google-generativeai      #
+gigachat                 #
