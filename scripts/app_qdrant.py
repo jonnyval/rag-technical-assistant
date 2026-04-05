@@ -2,8 +2,10 @@ import sys
 import os
 import pickle
 import warnings
+import re
 from pathlib import Path
 
+# Добавляем корень проекта для корректных импортов
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 warnings.filterwarnings("ignore")
 
@@ -26,26 +28,46 @@ from typing import List
 
 from src.config import settings
 from src.retrieval.rag_qdrant import RegLabQdrantRetriever
-
 # ==========================================
 # 🧩 SGR СХЕМЫ (Schema-Guided Reasoning)
 # ==========================================
 class FactExtraction(BaseModel):
+    """Схема для извлечения отдельного факта из текста."""  # <--- ДОБАВЛЕНО
     source_file: str = Field(description="Название файла-источника из предоставленного контекста")
     fact: str = Field(description="Конкретный технический факт или шаг, полезный для ответа")
 
 class RAGReasoningSchema(BaseModel):
+    """Схема мышления и генерации финального ответа."""     # <--- ДОБАВЛЕНО
     user_intent: str = Field(description="Кратко переформулируйте, что именно хочет узнать пользователь.")
     extracted_facts: List[FactExtraction] = Field(description="Массив полезных фактов. Пусто, если ничего не найдено.")
     missing_context: str = Field(description="Чего не хватает в контексте для полного ответа.")
-    final_answer: str = Field(description="ОБЯЗАТЕЛЬНОЕ ПОЛЕ. Итоговый ответ. Формат Markdown. Выбери правильный вариант из предложенных пользователем.")
-
+    final_answer: str = Field(description="ОБЯЗАТЕЛЬНОЕ ПОЛЕ. Итоговый ответ. Формат Markdown. Выбери ВСЕ правильные варианты из предложенных.")
 # ==========================================
-# 🛠 УТИЛИТЫ
+# 🛠 ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # ==========================================
 class KeyRotationCallbackHandler(BaseCallbackHandler):
     def on_llm_error(self, error: BaseException, **kwargs) -> None:
-        print(f"\n⚠️ [РОТАЦИЯ] Ошибка API: {type(error).__name__}. Переключаюсь на запасной ключ...")
+        st.error(f"⚠️ [РОТАЦИЯ] Ошибка API: {error}")
+
+def detect_equipment_intent(query: str) -> List[str]:
+    """Определяет тип оборудования на основе ключевых слов из запроса. Возвращает список."""
+    q_lower = query.lower()
+    detected = []
+
+    # 1. AstraRegul (Софт / Верхний уровень)
+    if re.search(r'\b(astraregul|astra|астра|hmi|ide|historian|сервер|server|окно|проект[аеу]?)\b', q_lower):
+        detected.append("AstraRegul")
+    
+    # 2. R500S (Безопасность / Safety)
+    if re.search(r'\b(r500s|r-500s|safety|безопасност[иь])\b', q_lower):
+        detected.append("R500S")
+        
+    # 3. R500 (Стандартное железо)
+    if re.search(r'\b(r500|r-500|regul|регул|плк)\b', q_lower):
+        detected.append("R500")
+
+    # Если нашли хоть что-то — возвращаем список. Иначе — флаг "Все".
+    return detected if detected else ["Все"]
 
 def format_docs(docs):
     formatted = []
@@ -55,11 +77,10 @@ def format_docs(docs):
     return "\n\n".join(formatted)
 
 # ==========================================
-# 🚀 ИНИЦИАЛИЗАЦИЯ СИСТЕМЫ (QDRANT + PARENT-CHILD)
+# 🚀 ИНИЦИАЛИЗАЦИЯ СИСТЕМЫ
 # ==========================================
-@st.cache_resource(show_spinner="Загрузка баз и моделей Qdrant...")
+@st.cache_resource
 def init_rag_system():
-    # 1. Загрузка моделей эмбеддингов
     dense_embeddings = HuggingFaceEmbeddings(
         model_name=settings.embedding_model_name,
         model_kwargs={'device': settings.device},
@@ -67,7 +88,6 @@ def init_rag_system():
     )
     sparse_embeddings = FastEmbedSparse(model_name="Qdrant/bm25")
 
-    # 2. Подключение к Qdrant (Гибридный режим)
     qdrant = QdrantVectorStore.from_existing_collection(
         embedding=dense_embeddings,
         sparse_embedding=sparse_embeddings,
@@ -76,33 +96,30 @@ def init_rag_system():
         retrieval_mode=RetrievalMode.HYBRID
     )
 
-    # 3. Загрузка хранилища Родителей из Pickle
     store = InMemoryStore()
     parent_store_file = os.path.join(settings.parent_store_path, "parents_store.pkl")
-    if os.path.exists(parent_store_file):
-        with open(parent_store_file, 'rb') as f:
-            store.store = pickle.load(f)
-    else:
-        raise FileNotFoundError(f"Файл {parent_store_file} не найден! Выполните ингест.")
+    with open(parent_store_file, 'rb') as f:
+        store.store = pickle.load(f)
 
-    # 4. Базовый ретривер (Qdrant -> Родители)
-    # Инициализируем сплиттер (он обязателен для структуры ParentDocumentRetriever, даже при поиске)
-    child_splitter = MarkdownTextSplitter(
-        chunk_size=settings.child_chunk_size, 
-        chunk_overlap=settings.child_chunk_overlap
-    )
+    child_splitter = MarkdownTextSplitter(chunk_size=settings.child_chunk_size, chunk_overlap=settings.child_chunk_overlap)
     
     parent_retriever = ParentDocumentRetriever(
         vectorstore=qdrant,
         docstore=store,
-        child_splitter=child_splitter,  # <--- Теперь передаем обязательный параметр
-        search_kwargs={"k": settings.top_k_retrieval} 
+        child_splitter=child_splitter,
+        search_kwargs={"k": settings.top_k_retrieval}
     )
 
-    # 5. Инициализация Реранкера
     rerank_model = CrossEncoder(settings.reranker_model_name, device=settings.device)
+    
+    if settings.active_llm == "gemini":
+        llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=settings.google_api_key, temperature=0.2)
+    elif settings.active_llm == "gigachat":
+        llm = GigaChat(credentials=settings.gigachat_credentials, verify_ssl_certs=False, model="GigaChat-2", temperature=0.2)
+    else:
+        llms = [ChatOpenAI(base_url="https://api.groq.com/openai/v1", api_key=k, model="llama-3.3-70b-versatile", temperature=0.2, callbacks=[KeyRotationCallbackHandler()]) for k in settings.groq_api_keys]
+        llm = llms[0].with_fallbacks(llms[1:]) if len(llms) > 1 else llms[0]
 
-    # 6. Сборка финального умного ретривера
     retriever = RegLabQdrantRetriever(
         parent_retriever=parent_retriever,
         reranker_model=rerank_model,
@@ -111,64 +128,69 @@ def init_rag_system():
         use_litm=settings.use_litm
     )
 
-    # 7. Инициализация LLM
-    if settings.active_llm == "gigachat":
-        robust_llm = GigaChat(credentials=settings.gigachat_credentials, verify_ssl_certs=False, model="GigaChat-2-Pro", temperature=0.2)
-    elif settings.active_llm == "gemini":
-        robust_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=settings.google_api_key, temperature=0.2)
-    else:
-        keys = settings.groq_api_keys
-        llms = [
-            ChatOpenAI(base_url="https://api.groq.com/openai/v1", api_key=key, model="llama-3.3-70b-versatile", temperature=0.2, max_retries=1, callbacks=[KeyRotationCallbackHandler()]) for key in keys
-        ]
-        robust_llm = llms[0].with_fallbacks(llms[1:]) if len(llms) > 1 else llms[0]
-
-    # 8. Сборка SGR Промпта и Цепочки
-    prompt = ChatPromptTemplate.from_template("""
+    prompt_template = ChatPromptTemplate.from_template("""
     Ты ведущий технический эксперт компании "РегЛаб". 
-    Твоя задача — проанализировать контекст и ответить на вопрос пользователя, строго следуя заданной JSON схеме.
+    Твоя задача — проанализировать контекст и ответить на вопрос, строго следуя JSON схеме.
     
-    ВАЖНО: 
-    1. Если пользователь дает варианты ответов, выбери правильный.
-    2. ДЕЛАЙ ДОПУЩЕНИЯ: Если в вопросе и контексте есть похожие термины, считай, что общая логика статусов совпадает, и используй таблицу из контекста.
-    3. Поле `final_answer` — это ЕДИНСТВЕННОЕ, что увидит пользователь. Ты ОБЯЗАН его заполнить, сформулировав красивый итоговый ответ на основе извлеченных фактов. Никогда не возвращай null или пустую строку в этом поле.
+    ГЛОССАРИЙ:
+    - R500: Стандартные ПЛК (РСУ).
+    - R500S: Контроллеры безопасности (ПСБ, SIL3).
+    - AstraRegul: Верхний уровень (HMI, Server, Historian, IDE).
+    
+    ПРАВИЛА:
+    1. Если есть варианты ответов — выбери ВСЕ правильные.
+    2. ДЕЛАЙ ДОПУЩЕНИЯ: Если контекст говорит о Modbus Serial, а вопрос о Modbus TCP, считай логику статусов одинаковой.
+    3. Поле final_answer ОБЯЗАТЕЛЬНО. Никогда не оставляй его пустым.
     
     Контекст:
     {context}
     
-    Вопрос пользователя: {input}
+    Вопрос: {input}
     """)
     
-    structured_llm = robust_llm.with_structured_output(RAGReasoningSchema, method="function_calling")
-    
-    sgr_chain = (
-        {"context": retriever | format_docs, "input": RunnablePassthrough()}
-        | prompt
-        | structured_llm
-    )
+    if settings.active_llm == "gigachat":
+        structured_llm = llm.with_structured_output(RAGReasoningSchema)
+    else:
+        structured_llm = llm.with_structured_output(RAGReasoningSchema, method="function_calling")
+    sgr_chain = ({"context": retriever | format_docs, "input": RunnablePassthrough()} | prompt_template | structured_llm)
 
     return retriever, sgr_chain
 
 # ==========================================
-# 🎨 STREAMLIT ИНТЕРФЕЙС
+# 🖥 ИНТЕРФЕЙС STREAMLIT
 # ==========================================
 def main():
     st.set_page_config(page_title="RegLab AI", layout="wide")
     st.title("🤖 База знаний РегЛаб (Qdrant Edition)")
-    st.markdown(f"**База:** `{settings.active_db_name}` | **LLM:** `{settings.active_llm.upper()}`")
+    
+    # === ВОЗВРАЩАЕМ ИНФОРМАЦИОННУЮ ПАНЕЛЬ ===
+    st.markdown(f"**База данных:** `{settings.active_db_name}` | **Активная LLM:** `{settings.active_llm.upper()}`")
+    st.divider()
+    
+    
+    # === МУЛЬТИ-ФИЛЬТР В STREAMLIT ===
+    st.markdown("**Фильтр поиска:**")
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        selected_equipment = st.multiselect(
+            "Принудительный фильтр (оставьте пустым для 'Авто'):",
+            options=["AstraRegul", "R500", "R500S"],
+            default=[],
+            help="Выберите один или несколько типов оборудования. Если оставить пустым, система определит контекст автоматически."
+        )
+    st.divider()
 
-    try:
-        retriever, sgr_chain = init_rag_system()
-    except Exception as e:
-        st.error(f"Ошибка загрузки: {e}")
-        st.stop()
-
-    if "messages" not in st.session_state:
+    if 'messages' not in st.session_state:
         st.session_state.messages = []
+    
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
 
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+    if 'rag_system' not in st.session_state:
+        st.session_state.rag_system = init_rag_system()
+        
+    retriever, sgr_chain = st.session_state.rag_system
 
     if prompt := st.chat_input("Ваш вопрос..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
@@ -178,50 +200,48 @@ def main():
         with st.chat_message("assistant"):
             with st.spinner("Анализ документов через Qdrant..."):
                 try:
-                    # 1. Получаем документы
+                    # === ЛОГИКА АВТО-МАРШРУТИЗАЦИИ ДЛЯ МАССИВОВ ===
+                    active_filter = selected_equipment
+                    
+                    if not active_filter:  # Если массив пуст
+                        detected_intent = detect_equipment_intent(prompt)
+                        active_filter = detected_intent
+                        
+                        if "Все" not in active_filter:
+                            formatted_names = ", ".join(active_filter)
+                            st.caption(f"🤖 *Авто-маршрутизация: Ищем в **{formatted_names}***")
+                        else:
+                            st.caption("🤖 *Авто-маршрутизация: Ищем по всей базе*")
+
+                    # Передаем массив в ретривер
+                    retriever.equipment_filter = active_filter
+                    
+                    # 1. Поиск документов
                     docs = retriever.invoke(prompt)
                     
-                    # === ДОБАВЬТЕ ЭТИ ТРИ СТРОЧКИ ДЛЯ ОТЛАДКИ ===
-                    print("\n\n" + "="*50)
-                    print("ЧТО ВИДИТ LLM В САМОМ ЛУЧШЕМ ДОКУМЕНТЕ:")
-                    print(docs[0].page_content if docs else "Документов нет")
-                    print("="*50 + "\n\n")
-                    # ============================================
-
-                    # 2. Запускаем "мозг" (SGR цепочка)
-                    sgr_response = sgr_chain.invoke(prompt)
+                    # 2. Генерация ответа
+                    response = sgr_chain.invoke(prompt)
                     
-                    # === ОТЛАДКА СЫРОГО ОТВЕТА ===
-                    print("\n--- СЫРОЙ ОТВЕТ МОДЕЛИ ---")
-                    print(repr(sgr_response))
-                    print("--------------------------\n")
-
-                    # 🔴 ВОТ ЭТА СТРОЧКА ВЫВЕДЕТ ОТВЕТ ПОЛЬЗОВАТЕЛЮ НА ЭКРАН 🔴
-                    st.markdown(sgr_response.final_answer)
+                    # Вывод основного ответа
+                    st.markdown(response.final_answer)
                     
-                    with st.expander("🧠 Процесс мышления (SGR Audit)"):
-                        st.markdown(f"**Понятый интент:** {sgr_response.user_intent}")
-                        st.markdown("**Извлеченные факты:**")
-                        if sgr_response.extracted_facts:
-                            for fact in sgr_response.extracted_facts:
-                                st.markdown(f"- 📄 `{fact.source_file}`: {fact.fact}")
-                        else:
-                            st.markdown("- Фактов не найдено.")
-                        st.markdown(f"**Чего не хватило:** {sgr_response.missing_context}")
+                    # Экспандеры с деталями
+                    with st.expander("🧠 Мышление (SGR)"):
+                        st.write(f"**Интент:** {response.user_intent}")
+                        st.write("**Факты:**")
+                        for f in response.extracted_facts:
+                            st.write(f"- {f.source_file}: {f.fact}")
+                        st.write(f"**Чего не хватило:** {response.missing_context}")
 
-                    with st.expander("📚 Исходные чанки (Retriever)"):
-                        for i, doc in enumerate(docs):
-                            meta = doc.metadata
-                            st.markdown(f"**{i+1}. {meta.get('source_file')}** ({meta.get('breadcrumb_raw')})")
-                            if meta.get('source_url'):
-                                st.markdown(f"🔗 [Ссылка]({meta.get('source_url')})")
-                            st.markdown(f"Уверенность реранкера: {meta.get('rerank_score', 0):.2f}")
-                            st.divider()
-                            
-                    st.session_state.messages.append({"role": "assistant", "content": sgr_response.final_answer})
+                    with st.expander("📚 Источники"):
+                        if not docs:
+                            st.write("Документы не найдены (возможно, не совпали фильтры).")
+                        for i, d in enumerate(docs):
+                            st.write(f"{i+1}. {d.metadata.get('source_file')} (Score: {d.metadata.get('rerank_score', 0):.2f})")
                     
+                    st.session_state.messages.append({"role": "assistant", "content": response.final_answer})
                 except Exception as e:
-                    st.error(f"Ошибка генерации: {e}")
+                    st.error(f"Ошибка: {e}")
 
 if __name__ == "__main__":
     main()

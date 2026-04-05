@@ -70,7 +70,7 @@ class UnifiedEvaluator:
             base_judge = GigaChat(
                 credentials=settings.gigachat_credentials, 
                 verify_ssl_certs=False, 
-                model="GigaChat-2-Pro", # Желательно использовать Pro для точного судейства
+                model="GigaChat-2", # Желательно использовать Pro для точного судейства
                 temperature=0.0         # 0.0 для максимальной строгости
             )
             # GigaChat сам понимает структуры без явного указания method

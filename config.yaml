@@ -2,7 +2,7 @@
 # ⚙️ ОСНОВНЫЕ НАСТРОЙКИ RAG СИСТЕМЫ
 # ==========================================
 llm:
-  active: "groq" # Доступные варианты: "groq", "gigachat", "gemini"
+  active: "gigachat" # Доступные варианты: "groq", "gigachat", "gemini"
 
 # 🎯 Базы данных
 databases:
