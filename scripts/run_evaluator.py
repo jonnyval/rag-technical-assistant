@@ -6,6 +6,7 @@ import numpy as np
 import re
 from pathlib import Path
 import warnings
+from datetime import datetime
 
 # Добавляем корень проекта для корректных импортов
 sys.path.append(str(Path(__file__).resolve().parent.parent))
@@ -47,9 +48,13 @@ class UnifiedEvaluator:
         # Откуда берем результаты
         self.results_dir = Path("result_test_hands") / self.db_name
         
-        # Куда сохраняем оцененные файлы и отчеты
-        self.report_path = Path("reports") / f"{self.db_name}_evaluation"
+        # === 🌟 ГЕНЕРИРУЕМ УНИКАЛЬНЫЙ ТАЙМСТАМП ===
+        self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Куда сохраняем оцененные файлы и отчеты (добавляем таймстамп в название)
+        self.report_path = Path("reports") / f"{self.db_name}_evaluation_{self.timestamp}"
         self.report_path.mkdir(parents=True, exist_ok=True)
+        # ==========================================
         
         self.emb_model = None
         self.judge_chain = None
@@ -70,10 +75,9 @@ class UnifiedEvaluator:
             base_judge = GigaChat(
                 credentials=settings.gigachat_credentials, 
                 verify_ssl_certs=False, 
-                model="GigaChat-2", # Желательно использовать Pro для точного судейства
-                temperature=0.0         # 0.0 для максимальной строгости
+                model="GigaChat-2", 
+                temperature=0.0         
             )
-            # GigaChat сам понимает структуры без явного указания method
             judge_llm = base_judge.with_structured_output(JudgeSchema)
             
         elif self.llm_name == "gemini":
@@ -82,6 +86,26 @@ class UnifiedEvaluator:
                 model="gemini-2.5-flash", 
                 google_api_key=settings.google_api_key, 
                 temperature=0.0
+            )
+            judge_llm = base_judge.with_structured_output(JudgeSchema)
+
+       # === 🌟 ИСПОЛЬЗУЕМ ВАШ КОНФИГ ДЛЯ OLLAMA ===
+        elif self.llm_name == "ollama":
+            from langchain_ollama import ChatOllama
+            
+            ollama_config = getattr(settings, "ollama", {})
+            model_name = ollama_config.get("metadata_model", "qwen3:8b")
+            
+            raw_url = ollama_config.get("base_url", "http://localhost:11434")
+            base_url = raw_url.replace("/v1", "")
+            
+            log.info(f"Подключение к локальной Ollama: {model_name} по адресу {base_url}")
+            
+            base_judge = ChatOllama(
+                model=model_name,                
+                temperature=0.0,                    
+                base_url=base_url,                  
+                format="json"                       
             )
             judge_llm = base_judge.with_structured_output(JudgeSchema)
             
@@ -98,7 +122,6 @@ class UnifiedEvaluator:
                 temperature=0.0,
                 max_retries=2
             )
-            # Для Groq обязательно указываем method="function_calling"
             judge_llm = base_judge.with_structured_output(JudgeSchema, method="function_calling")
 
         # Промпт для Судьи
@@ -135,6 +158,7 @@ class UnifiedEvaluator:
             return
 
         full_results = []
+        incorrect_results = [] 
         stats_by_file = {}
 
         for file_path in json_files:
@@ -158,7 +182,11 @@ class UnifiedEvaluator:
                     item["Судья_Инфо"] = "Ошибка генерации API"
                     item["Оценка_Сходства"] = 0.0
                     file_stats["api_errors"] += 1
-                    full_results.append({**item, "source_json": file_path.name})
+                    
+                    # Сохраняем в общий и в "ошибочный" списки
+                    result_item = {**item, "source_json": file_path.name}
+                    full_results.append(result_item)
+                    incorrect_results.append(result_item)
                     continue
 
                 file_stats["total"] += 1
@@ -182,7 +210,7 @@ class UnifiedEvaluator:
                         item["Правильность"] = "Да"
                         item["Судья_Инфо"] = f"Успешно по векторам (Сходство: {score:.2f})"
                     else:
-                        # 4. Обращение к LLM-судье (если вектора сомневаются)
+                        # 4. Обращение к LLM-судье
                         try:
                             verdict = self.judge_chain.invoke({
                                 "question": item.get("Вопрос", "Не указан"),
@@ -192,8 +220,7 @@ class UnifiedEvaluator:
                             item["Правильность"] = "Да" if verdict.is_correct else "Нет"
                             item["Судья_Инфо"] = f"LLM: {verdict.reasoning}"
                             
-                            # Небольшая пауза, чтобы не словить Rate Limit от LLM-судьи
-                            if self.llm_name != "gemini":
+                            if self.llm_name not in ["gemini", "ollama"]:
                                 time.sleep(1)
                                 
                         except Exception as e:
@@ -201,38 +228,57 @@ class UnifiedEvaluator:
                             item["Судья_Инфо"] = f"Ошибка LLM-Судьи: {str(e)}"
                             file_stats["api_errors"] += 1
 
+                # Подсчет статистики и распределение по спискам
+                result_item = {**item, "source_json": file_path.name}
+                
                 if item["Правильность"] == "Да":
                     file_stats["correct"] += 1
-                elif item["Правильность"] == "Нет":
-                    file_stats["incorrect"] += 1
+                elif item["Правильность"] in ["Нет", "Ошибка Оценки", "Ошибка"]:
+                    if item["Правильность"] == "Нет":
+                        file_stats["incorrect"] += 1
+                    incorrect_results.append(result_item) 
 
-                full_results.append({**item, "source_json": file_path.name})
+                full_results.append(result_item)
 
-            # Сохраняем оцененный файл в новую директорию
-            evaluated_file_path = self.report_path / file_path.name
+            # Сохраняем оцененный файл в новую директорию С ТАЙМСТАМПОМ
+            new_filename = f"{file_path.stem}_{self.timestamp}{file_path.suffix}"
+            evaluated_file_path = self.report_path / new_filename
             with open(evaluated_file_path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=4)
             
-            stats_by_file[file_path.name] = file_stats
+            stats_by_file[new_filename] = file_stats
 
-        self._save_reports(full_results, stats_by_file)
+        self._save_reports(full_results, incorrect_results, stats_by_file)
 
-    def _save_reports(self, full_data, stats):
-        """Сохраняет полный дамп и генерирует CSV-сводку."""
-        json_out = self.report_path / "full_report.json"
+    def _save_reports(self, full_data, incorrect_data, stats):
+        """Сохраняет полный дамп, ошибки и генерирует CSV-сводку с таймстампами."""
+        
+        # 1. Сохраняем полный отчет
+        json_out = self.report_path / f"full_report_{self.timestamp}.json"
         with open(json_out, 'w', encoding='utf-8') as f:
             json.dump({
                 "metadata": {"db": self.db_name, "llm_judge": self.llm_name, "threshold": self.threshold},
                 "results": full_data
             }, f, ensure_ascii=False, indent=4)
 
-        csv_out = self.report_path / "summary.csv"
+        # 2. 🌟 СОХРАНЯЕМ ФАЙЛ С ОШИБКАМИ 🌟
+        if incorrect_data:
+            incorrect_out = self.report_path / f"incorrect_answers_{self.timestamp}.json"
+            with open(incorrect_out, 'w', encoding='utf-8') as f:
+                json.dump({
+                    "metadata": {"total_errors": len(incorrect_data), "db": self.db_name},
+                    "results": incorrect_data
+                }, f, ensure_ascii=False, indent=4)
+            log.info(f"🚨 Сохранено неверных ответов: {len(incorrect_data)} -> {incorrect_out.name}")
+
+        # 3. CSV Сводка
+        csv_out = self.report_path / f"summary_{self.timestamp}.csv"
         with open(csv_out, 'w', newline='', encoding='utf-8-sig') as f:
             writer = csv.writer(f, delimiter=';')
             writer.writerow(["Файл", "Всего обработано", "Ошибки API", "Верно", "Неверно", "Accuracy (%)"])
             
             print("\n" + "="*90)
-            print(f"{'ФАЙЛ':<35} | {'УСПЕХ':<7} | {'API ERR':<7} | {'ВЕРНО':<7} | {'ACCURACY'}")
+            print(f"{'ФАЙЛ':<45} | {'УСПЕХ':<7} | {'API ERR':<7} | {'ВЕРНО':<7} | {'ACCURACY'}")
             print("-" * 90)
             
             total_v, total_e, total_c = 0, 0, 0
@@ -240,8 +286,8 @@ class UnifiedEvaluator:
                 acc = (s['correct'] / s['total'] * 100) if s['total'] > 0 else 0
                 writer.writerow([name, s['total'], s['api_errors'], s['correct'], s['incorrect'], f"{acc:.1f}"])
                 
-                short_name = (name[:32] + '...') if len(name) > 35 else name
-                print(f"{short_name:<35} | {s['total']:<7} | {s['api_errors']:<7} | {s['correct']:<7} | {acc:.1f}%")
+                short_name = (name[:42] + '...') if len(name) > 45 else name
+                print(f"{short_name:<45} | {s['total']:<7} | {s['api_errors']:<7} | {s['correct']:<7} | {acc:.1f}%")
                 
                 total_v += s['total']
                 total_e += s['api_errors']
@@ -249,10 +295,10 @@ class UnifiedEvaluator:
             
             final_acc = (total_c / total_v * 100) if total_v > 0 else 0
             print("-" * 90)
-            print(f"{'ИТОГО':<35} | {total_v:<7} | {total_e:<7} | {total_c:<7} | {final_acc:.1f}%")
+            print(f"{'ИТОГО':<45} | {total_v:<7} | {total_e:<7} | {total_c:<7} | {final_acc:.1f}%")
             print("="*90)
 
-        log.info(f"✅ Отчеты и оцененные файлы успешно сохранены в: {self.report_path}")
+        log.info(f"✅ Отчеты успешно сохранены в: {self.report_path}")
 
 if __name__ == "__main__":
     evaluator = UnifiedEvaluator(threshold=0.82)

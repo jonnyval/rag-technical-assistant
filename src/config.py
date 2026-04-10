@@ -20,12 +20,12 @@ class Config:
         db_config = self._raw_config.get("databases", {})
         self.active_db_name = db_config.get("active", "qdrant_v1")  # Переключено на новую БД
         
-        # Настройки АКТИВНОЙ базы (для обычных скриптов)
+       # Настройки АКТИВНОЙ базы (для обычных скриптов)
         active_db = db_config.get(self.active_db_name, {})
         self.db_path = active_db.get("path", "")
-        self.parent_store_path = active_db.get("parent_store", "") # НОВОЕ: для хранения Parent-чанков
+        self.db_url = active_db.get("url", "") # <--- ДОБАВЬТЕ ЭТУ СТРОКУ
+        self.parent_store_path = active_db.get("parent_store", "") 
         self.collection_name = active_db.get("collection", "tech_docs_reglab")
-        self.bm25_cache = active_db.get("bm25_cache", "") # Оставлено для совместимости с Chroma
 
         # Сохраняем ВСЕ базы в словарь (пригодится для A/B тестирования)
         self.all_databases = {k: v for k, v in db_config.items() if k != "active"}
@@ -34,6 +34,15 @@ class Config:
         models_config = self._raw_config.get("models", {})
         self.device = models_config.get("device", "cuda")
         
+# -----------------------------------------------------
+        # Настройки Ollama (Smart Metadata)
+        # -----------------------------------------------------
+        ollama_config = self._raw_config.get("ollama", {})
+        self.enable_smart_metadata = ollama_config.get("enable_smart_metadata", False)
+        self.ollama_metadata_model = ollama_config.get("metadata_model", "deepseek-r1:8b")
+        # ollama_base_url уже есть у вас в @property, но можно читать и из yaml
+        self.ollama_url = ollama_config.get("base_url", "http://localhost:11434/v1")
+
         # Узнаем, какие модели сейчас выбраны как активные
         active_emb_key = models_config.get("active_embedding", "qwen3")
         active_reranker_key = models_config.get("active_reranker", "bge_v2_m3")
@@ -75,6 +84,12 @@ class Config:
         self.docs_base_urls = paths.get("docs_base_urls", {})
 
         # -----------------------------------------------------
+        # Настройки интерфейса (UI)
+        # -----------------------------------------------------
+        ui_config = self._raw_config.get("ui", {})
+        self.show_manual_filter = ui_config.get("show_manual_filter", False)
+
+        # -----------------------------------------------------
         # Отладка и профилирование
         # -----------------------------------------------------
         debug_config = self._raw_config.get("debug", {})
@@ -107,6 +122,15 @@ class Config:
         llm_config = self._raw_config.get("llm") or {}
         return llm_config.get("active", "groq")
     
+    @property
+    def llm_model_name(self) -> str:
+        """Возвращает название модели для активного провайдера LLM"""
+        llm_config = self._raw_config.get("llm") or {}
+        models = llm_config.get("models", {})
+        # Возвращаем модель, которая соответствует активному провайдеру (по умолчанию qwen3:8b)
+        return models.get(self.active_llm, "qwen3:8b")
+
+
     @property
     def google_api_key(self) -> str:
         return os.getenv("GOOGLE_API_KEY", "")

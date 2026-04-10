@@ -3,6 +3,7 @@ import os
 import json
 import hashlib
 import uuid
+import gc  # Сборщик мусора
 from pathlib import Path
 from typing import Dict
 from tqdm import tqdm
@@ -12,16 +13,24 @@ warnings.filterwarnings("ignore")
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from qdrant_client import QdrantClient
-
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_qdrant import QdrantVectorStore, FastEmbedSparse, RetrievalMode
-from langchain_classic.storage import LocalFileStore
 from langchain_classic.retrievers import ParentDocumentRetriever
 from langchain_text_splitters import MarkdownTextSplitter
+from langchain_community.storage import SQLStore
+import pickle
+from langchain_classic.storage import EncoderBackedStore
 
 from src.config import settings
 from src.logger import log
-from src.document_processing.parsers import process_docx_file, process_html_file
+from src.document_processing.parsers_qdrant_v3 import process_docx_file, process_html_file
+
+# Попытка импортировать torch для очистки памяти GPU (если есть)
+try:
+    import torch
+    has_torch = True
+except ImportError:
+    has_torch = False
 
 def get_file_hash(filepath: Path) -> str:
     hasher = hashlib.md5()
@@ -43,7 +52,7 @@ def save_hash_registry(registry: Dict[str, dict]):
             json.dump(registry, f, indent=4)
 
 def main():
-    log.info("🚀 ЗАПУСК QDRANT ВЕКТОРИЗАЦИИ (PARENT-CHILD + HYBRID SEARCH)")
+    log.info("🚀 ЗАПУСК QDRANT ВЕКТОРИЗАЦИИ (DOCKER + SQLITE + BATCHING)")
 
     log.info(f"Загрузка модели: {settings.embedding_model_name}")
     dense_embeddings = HuggingFaceEmbeddings(
@@ -55,26 +64,20 @@ def main():
     log.info("Загрузка модели FastEmbed Sparse (BM25)...")
     sparse_embeddings = FastEmbedSparse(model_name="Qdrant/bm25")
 
-    os.makedirs(settings.db_path, exist_ok=True)
-    os.makedirs(settings.parent_store_path, exist_ok=True)
+    os.makedirs(os.path.dirname(settings.parent_store_path), exist_ok=True)
     
-    log.info(f"Подключение к Qdrant ({settings.db_path})...")
+    log.info(f"Подключение к Qdrant Server ({settings.db_url})...")
     
-    # 1. Открываем временного клиента только чтобы проверить наличие базы
-    temp_client = QdrantClient(path=settings.db_path)
-    collection_exists = temp_client.collection_exists(settings.collection_name)
+    client = QdrantClient(url=settings.db_url)
+    collection_exists = client.collection_exists(settings.collection_name)
     
-    # 2. ЗАКРЫВАЕМ клиента, чтобы он снял блокировку (lock) с файлов Windows!
-    temp_client.close()
-    
-    # 3. Теперь LangChain может безопасно создавать свои подключения
     if collection_exists:
         log.info("✅ Подключено к существующей коллекции Qdrant.")
-        qdrant = QdrantVectorStore.from_existing_collection(
+        qdrant = QdrantVectorStore(
+            client=client,
+            collection_name=settings.collection_name,
             embedding=dense_embeddings,
             sparse_embedding=sparse_embeddings,
-            collection_name=settings.collection_name,
-            path=settings.db_path,
             retrieval_mode=RetrievalMode.HYBRID
         )
     else:
@@ -84,18 +87,33 @@ def main():
             embedding=dense_embeddings,
             sparse_embedding=sparse_embeddings,
             collection_name=settings.collection_name,
-            path=settings.db_path,  # Передаем именно path, а не client
+            url=settings.db_url,
             retrieval_mode=RetrievalMode.HYBRID
         )
 
-    store = LocalFileStore(settings.parent_store_path)
-
-    # Умный нарезчик Детей (не режет таблицы благодаря MarkdownTextSplitter)
+    log.info(f"Подключение к хранилищу родителей (SQLite): {settings.parent_store_path}")
+    
+    # 1. Базовое хранилище байтов (SQLite)
+    byte_store = SQLStore(
+        namespace="reglab_parents",
+        db_url=f"sqlite:///{settings.parent_store_path}"
+    )
+    byte_store.create_schema() # Гарантируем, что таблица существует
+    
+    # 2. Обертка-транслятор (Document <---> Bytes)
+    store = EncoderBackedStore(
+        store=byte_store,
+        key_encoder=lambda k: k,
+        value_serializer=pickle.dumps,     # Превращаем Document в байты при записи
+        value_deserializer=pickle.loads    # Восстанавливаем Document при чтении
+    )
+    
+    # 3. ВОТ ЭТОТ БЛОК БЫЛ УТЕРЯН: Создаем нарезчик дочерних чанков
     child_splitter = MarkdownTextSplitter(
         chunk_size=settings.child_chunk_size, 
         chunk_overlap=settings.child_chunk_overlap
     )
-    
+
     retriever = ParentDocumentRetriever(
         vectorstore=qdrant,
         docstore=store,
@@ -107,7 +125,9 @@ def main():
 
     for source_type, folder_path in settings.source_dirs.items():
         p = Path(folder_path)
-        if not p.exists(): continue
+        if not p.exists():
+            log.warning(f"⚠️ Папка не найдена: {folder_path}")
+            continue
 
         current_base_url = settings.docs_base_urls.get(source_type, "")
         log.info(f"📂 Сканирование {source_type}")
@@ -122,33 +142,70 @@ def main():
         files_to_process = []
         for f in files:
             if f.name.startswith('~$') or f.name.endswith('_print.htm'): continue
-            
             current_hash = get_file_hash(f)
             file_record = hash_registry.get(f.name, {})
-            
             if file_record.get('hash') != current_hash:
                 files_to_process.append((f, current_hash, file_record.get('parent_ids', [])))
 
         if not files_to_process: continue
-
         log.info(f"🔄 Требуется обработать: {len(files_to_process)} файлов")
 
+        # --- НАСТРОЙКИ БАТЧИНГА ---
+        BATCH_SIZE = 5 
+        batch_docs = []
+        batch_ids = []
+        pending_hashes = {}
+
         for file_path, new_hash, old_parent_ids in tqdm(files_to_process, desc=f"Ингест {source_type}"):
-            # Очистка старых версий файла
+            # 1. Удаление старых версий
             if old_parent_ids:
                 store.mdelete(old_parent_ids)
-                try: qdrant.delete(where={"doc_id": {"$in": old_parent_ids}})
-                except Exception: pass
+                try: 
+                    qdrant.delete(where={"doc_id": {"$in": old_parent_ids}})
+                except Exception as e: 
+                    log.error(f"Ошибка удаления чанков {file_path.name}: {e}")
 
-            parent_docs = processor(file_path)
+            # 2. Изолированная обработка файла
+            try:
+                parent_docs = processor(file_path)
+            except Exception as e:
+                log.error(f"❌ Ошибка парсинга файла {file_path.name}: {e}")
+                continue # Пропускаем файл и идем к следующему
 
+            # 3. Накопление батча
             if parent_docs:
                 parent_ids = [str(uuid.uuid4()) for _ in parent_docs]
-                retriever.add_documents(parent_docs, ids=parent_ids)
-                total_processed += 1
+                batch_docs.extend(parent_docs)
+                batch_ids.extend(parent_ids)
+                pending_hashes[file_path.name] = {"hash": new_hash, "parent_ids": parent_ids}
 
-                hash_registry[file_path.name] = {"hash": new_hash, "parent_ids": parent_ids}
+            # 4. Отправка батча в базу
+            if len(batch_docs) >= BATCH_SIZE:
+                retriever.add_documents(batch_docs, ids=batch_ids)
+                
+                # Фиксируем успешное сохранение в хэш-реестре
+                hash_registry.update(pending_hashes)
                 save_hash_registry(hash_registry)
+                
+                total_processed += len(pending_hashes)
+                
+                # Очистка батчей и памяти
+                batch_docs, batch_ids, pending_hashes = [], [], {}
+                gc.collect()
+                if has_torch and torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+
+        # 5. Отправка "хвоста" (остатков, которые не дотянули до BATCH_SIZE)
+        if batch_docs:
+            retriever.add_documents(batch_docs, ids=batch_ids)
+            hash_registry.update(pending_hashes)
+            save_hash_registry(hash_registry)
+            total_processed += len(pending_hashes)
+            
+            batch_docs, batch_ids, pending_hashes = [], [], {}
+            gc.collect()
+            if has_torch and torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
     log.info(f"🎉 ИНГЕСТ ЗАВЕРШЕН! Успешно обработано файлов: {total_processed}")
 

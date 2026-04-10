@@ -10,7 +10,7 @@ rag_langchain/
 
 # Локальные базы данных и кэш
 data/
-
+reports/
 
 chroma_db/
 bm25_cache/

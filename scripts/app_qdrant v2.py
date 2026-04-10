@@ -3,8 +3,6 @@ import os
 import warnings
 import re
 from pathlib import Path
-import pickle
-from langchain_classic.storage import EncoderBackedStore
 
 # Добавляем корень проекта для корректных импортов
 sys.path.append(str(Path(__file__).resolve().parent.parent))
@@ -103,18 +101,10 @@ def init_rag_system():
         retrieval_mode=RetrievalMode.HYBRID
     )
 
-    # 2. Подключение к SQLite (базовое хранилище байтов)
-    byte_store = SQLStore(
+    # 2. Подключение к SQLite (мгновенно, без загрузки в память)
+    store = SQLStore(
         namespace="reglab_parents",
         db_url=f"sqlite:///{settings.parent_store_path}"
-    )
-
-    # Добавляем обертку-транслятор (Bytes -> Document)
-    store = EncoderBackedStore(
-        store=byte_store,
-        key_encoder=lambda k: k,
-        value_serializer=pickle.dumps,     
-        value_deserializer=pickle.loads    # Восстанавливаем Document при чтении
     )
 
     child_splitter = MarkdownTextSplitter(chunk_size=settings.child_chunk_size, chunk_overlap=settings.child_chunk_overlap)
@@ -129,27 +119,11 @@ def init_rag_system():
     rerank_model = CrossEncoder(settings.reranker_model_name, device=settings.device)
     
     if settings.active_llm == "gemini":
-        llm = ChatGoogleGenerativeAI(
-            model=settings.llm_model_name, 
-            google_api_key=settings.google_api_key, 
-            temperature=0.2
-            )
+        llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=settings.google_api_key, temperature=0.2)
     elif settings.active_llm == "gigachat":
-        llm = GigaChat(
-            credentials=settings.gigachat_credentials, 
-            verify_ssl_certs=False, 
-            model=settings.llm_model_name, 
-            temperature=0.2
-            )
-    elif settings.active_llm == "ollama":
-        llm = ChatOpenAI(
-            base_url=settings.ollama_url,
-            api_key="ollama",             
-            model=settings.llm_model_name, # <--- Берем из конфига
-            temperature=0.2
-        )
+        llm = GigaChat(credentials=settings.gigachat_credentials, verify_ssl_certs=False, model="GigaChat-2", temperature=0.2)
     else:
-        llms = [ChatOpenAI(base_url="https://api.groq.com/openai/v1", api_key=k, model=settings.llm_model_name, temperature=0.2, callbacks=[KeyRotationCallbackHandler()]) for k in settings.groq_api_keys]
+        llms = [ChatOpenAI(base_url="https://api.groq.com/openai/v1", api_key=k, model="llama-3.3-70b-versatile", temperature=0.2, callbacks=[KeyRotationCallbackHandler()]) for k in settings.groq_api_keys]
         llm = llms[0].with_fallbacks(llms[1:]) if len(llms) > 1 else llms[0]
 
     retriever = RegLabQdrantRetriever(
@@ -162,18 +136,7 @@ def init_rag_system():
 
     prompt_template = ChatPromptTemplate.from_template("""
 Ты ведущий технический эксперт компании "РегЛаб". 
-Твоя задача — проанализировать контекст и ответить на вопрос. 
-Ты ДОЛЖЕН вернуть ответ СТРОГО в формате валидного JSON со следующей структурой:
-
-{{
-  "user_intent": "Кратко переформулируй, что именно хочет узнать пользователь",
-  "extracted_facts": [
-    {{"source_file": "имя файла", "fact": "факт из текста"}}
-  ],
-  "missing_context": "Чего не хватает в контексте (или 'Всего хватает')",
-  "final_answer": "Твой подробный итоговый ответ в формате Markdown",
-  "relevant_images": ["массив путей к картинкам, если они есть"]
-}}
+Твоя задача — проанализировать контекст и ответить на вопрос, строго следуя JSON схеме.
 
 ГЛОССАРИЙ:
 - R500: Стандартные ПЛК (РСУ).
@@ -184,6 +147,7 @@ def init_rag_system():
 1. Если есть варианты ответов — выбери ВСЕ правильные.
 2. ДЕЛАЙ ДОПУЩЕНИЯ: Если контекст говорит о Modbus Serial, а вопрос о Modbus TCP, считай логику статусов одинаковой.
 3. Поле final_answer ОБЯЗАТЕЛЬНО. Никогда не оставляй его пустым.
+4. ВАЖНО: Если в контексте встречаются изображения (в формате ![alt](путь)), и они иллюстрируют твой ответ, обязательно сохрани их "пути" в массив relevant_images.
 
 Контекст:
 {context}
@@ -193,9 +157,6 @@ def init_rag_system():
     
     if settings.active_llm == "gigachat":
         structured_llm = llm.with_structured_output(RAGReasoningSchema)
-    elif settings.active_llm == "ollama":
-        # Локальные модели хуже справляются с function_calling, используем json_mode
-        structured_llm = llm.with_structured_output(RAGReasoningSchema, method="json_mode")
     else:
         structured_llm = llm.with_structured_output(RAGReasoningSchema, method="function_calling")
         
@@ -210,31 +171,19 @@ def main():
     st.set_page_config(page_title="RegLab AI", layout="wide")
     st.title("🤖 База знаний РегЛаб (Qdrant Edition)")
     
-    # Выводим красивый многострочный блок с полным стеком напрямую из настроек
-    st.markdown(
-        f"**База данных:** Docker Qdrant (`{settings.collection_name}`) | "
-        f"**API Провайдер:** `{settings.active_llm.upper()}` | "
-        f"**Текстовая модель:** `{settings.llm_model_name}`\n\n"
-        f"**Векторы (Embeddings):** `{settings.embedding_model_name}` | "
-        f"**Реранкер (CrossEncoder):** `{settings.reranker_model_name}`"
-    )
+    st.markdown(f"**База данных:** Docker Qdrant (`{settings.collection_name}`) | **Активная LLM:** `{settings.active_llm.upper()}`")
     st.divider()
     
-    # По умолчанию фильтр пустой (включается авто-маршрутизация)
-    selected_equipment = []
-    
-    # Отрисовываем блок фильтра только если он включен в config.yaml
-    if settings.show_manual_filter:
-        st.markdown("**Фильтр поиска:**")
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            selected_equipment = st.multiselect(
-                "Принудительный фильтр (оставьте пустым для 'Авто'):",
-                options=["AstraRegul", "R500", "R500S"],
-                default=[],
-                help="Выберите один или несколько типов оборудования. Если оставить пустым, система определит контекст автоматически."
-            )
-        st.divider()
+    st.markdown("**Фильтр поиска:**")
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        selected_equipment = st.multiselect(
+            "Принудительный фильтр (оставьте пустым для 'Авто'):",
+            options=["AstraRegul", "R500", "R500S"],
+            default=[],
+            help="Выберите один или несколько типов оборудования. Если оставить пустым, система определит контекст автоматически."
+        )
+    st.divider()
 
     if 'messages' not in st.session_state:
         st.session_state.messages = []
@@ -258,26 +207,17 @@ def main():
                 try:
                     active_filter = selected_equipment
                     
-                    # Главный рубильник фильтрации из config.yaml
-                    if not settings.show_manual_filter:
-                        # Если фильтры выключены — принудительно ищем ВЕЗДЕ
-                        active_filter = ["Все"]
-                        st.caption("🤖 *Поиск по всей базе (фильтрация отключена в настройках)*")
-                    else:
-                        # Если фильтры включены, берем то, что пользователь выбрал в интерфейсе
-                        active_filter = selected_equipment
+                    if not active_filter:
+                        detected_intent = detect_equipment_intent(prompt)
+                        active_filter = detected_intent
                         
-                        # Если в интерфейсе ничего не выбрали, включаем авто-маршрутизацию
-                        if not active_filter:
-                            active_filter = detect_equipment_intent(prompt)
-                            
-                            if "Все" not in active_filter:
-                                formatted_names = ", ".join(active_filter)
-                                st.caption(f"🤖 *Авто-маршрутизация: Ищем в **{formatted_names}***")
-                            else:
-                                st.caption("🤖 *Авто-маршрутизация: Ищем по всей базе*")
+                        if "Все" not in active_filter:
+                            formatted_names = ", ".join(active_filter)
+                            st.caption(f"🤖 *Авто-маршрутизация: Ищем в **{formatted_names}***")
+                        else:
+                            st.caption("🤖 *Авто-маршрутизация: Ищем по всей базе*")
 
-                    # Передаем итоговый массив в кастомный ретривер
+                    # Передаем массив в кастомный ретривер (если вы добавили поле equipment_filter)
                     retriever.equipment_filter = active_filter
                     
                     # 1. Поиск документов
@@ -285,28 +225,6 @@ def main():
                     
                     # 2. Генерация ответа
                     response = sgr_chain.invoke(prompt)
-                    
-                    if response is None:
-                        st.error("⚠️ Локальная модель не смогла сформировать ответ в правильном формате JSON. Попробуйте перефразировать вопрос или выбрать другую модель в конфиге.")
-                    else:
-                        # Вывод основного ответа
-                        st.markdown(response.final_answer)
-
-                        # Отрисовка сохраненных картинок
-                        if hasattr(response, 'relevant_images') and response.relevant_images:
-                            for img_path in response.relevant_images:
-                                if os.path.exists(img_path):
-                                    st.image(img_path, caption="Иллюстрация из документации")
-                                else:
-                                    st.warning(f"Изображение не найдено на диске: {img_path}")
-                        
-                        # Экспандеры с деталями
-                        with st.expander("🧠 Мышление (SGR)"):
-                            st.write(f"**Интент:** {response.user_intent}")
-                            st.write("**Факты:**")
-                            for f in response.extracted_facts:
-                                st.write(f"- {f.source_file}: {f.fact}")
-                            st.write(f"**Чего не хватило:** {response.missing_context}")
                     
                     # Вывод основного ответа
                     st.markdown(response.final_answer)
@@ -331,14 +249,7 @@ def main():
                         if not docs:
                             st.write("Документы не найдены (возможно, не совпали фильтры).")
                         for i, d in enumerate(docs):
-                            file_name = d.metadata.get('source_file', 'Неизвестный файл')
-                            source_url = d.metadata.get('source_url', '')
-                            score = d.metadata.get('rerank_score', 0)
-                            
-                            if source_url:
-                                st.markdown(f"{i+1}. [{file_name}]({source_url}) *(Score: {score:.2f})*")
-                            else:
-                                st.write(f"{i+1}. {file_name} *(Score: {score:.2f})*")
+                            st.write(f"{i+1}. {d.metadata.get('source_file')} (Score: {d.metadata.get('rerank_score', 0):.2f})")
                     
                     st.session_state.messages.append({"role": "assistant", "content": response.final_answer})
                 except Exception as e:

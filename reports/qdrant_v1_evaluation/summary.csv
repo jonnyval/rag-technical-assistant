@@ -1,4 +1,0 @@
-﻿Файл;Всего обработано;Ошибки API;Верно;Неверно;Accuracy (%)
-qdrant_v1_sampled_AstraRegul.json;47;3;41;6;87.2
-qdrant_v1_sampled_R500.json;46;4;41;5;89.1
-qdrant_v1_sampled_R500S.json;21;0;17;4;81.0

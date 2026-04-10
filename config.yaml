@@ -2,11 +2,27 @@
 # ⚙️ ОСНОВНЫЕ НАСТРОЙКИ RAG СИСТЕМЫ
 # ==========================================
 llm:
-  active: "gigachat" # Доступные варианты: "groq", "gigachat", "gemini"
+  active: "ollama" # Доступные варианты: "groq", "gigachat", "gemini"
+
+  # Настройки конкретных моделей для каждого провайдера
+  models:
+    ollama: "qwen3:8b"
+    gemini: "gemini-2.5-flash"
+    gigachat: "GigaChat-2"
+    groq: "llama-3.3-70b-versatile"
+
+# ==========================================
+# 🦙 НАСТРОЙКИ OLLAMA (Локальные LLM)
+# ==========================================
+ollama:
+  enable_smart_metadata: true            # Включить умное извлечение метаданных при ингесте?
+  metadata_model: "qwen3:8b"       # Какую модель использовать
+  base_url: "http://localhost:11434/v1"  # Локальный API
+
 
 # 🎯 Базы данных
 databases:
-  active: "qdrant_v1"  # Указываем Qdrant как базу по умолчанию
+  active: "qdrant_v2_docker"  
  
   v3_unified:
     path: "data/vector_dbs/chroma_db_unified_master_v3"
@@ -27,6 +43,11 @@ databases:
     path: "data/vector_dbs/qdrant_v1_qwen3_hybrid"
     parent_store: "data/vector_dbs/qdrant_v1_qwen3_hybrid/parent_docstore"
     collection: "tech_docs_reglab"
+
+  qdrant_v2_docker:
+    url: "http://localhost:6333"  # <-- ТЕПЕРЬ ССЫЛАЕМСЯ НА DOCKER СЕРВЕР
+    parent_store: "data/vector_dbs/qdrant_v2_qwen3_hybrid/parents.db" # <-- БУДЕТ БАЗА SQLITE
+    collection: "reglab_tech_docs"
 
 # 🐛 Настройки отладки и профилирования
 debug:
@@ -81,6 +102,12 @@ paths:
     metod_docx: "data/source_docs/docs_word/metod"
     r500_docx: "data/source_docs/docs_word/R500"
     r500s_docx: "data/source_docs/docs_word/r500s"
-    astraregul_docx: "data/source_docs/docs_word/astraregul"
-    # r500_html: "data/source_docs/docs_html/RX00 HTML"
-    # astraregul_html: "data/source_docs/docs_html/Astra.Documentation"
+    # astraregul_docx: "data/source_docs/docs_word/astraregul"
+    r500_html: "data/source_docs/docs_html/RX00 HTML"
+    astraregul_html: "data/source_docs/docs_html/Astra.Documentation"
+
+# ==========================================
+# 🖥 НАСТРОЙКИ ИНТЕРФЕЙСА (UI)
+# ==========================================
+ui:
+  show_manual_filter: false  # Поставьте true, чтобы вернуть выпадающий список фильтров в интерфейс    
