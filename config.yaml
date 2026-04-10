@@ -92,7 +92,6 @@ chunking:
 paths:
   images_out_dir: "data/persistent_images"
   hash_registry: "data/file_hashes_qdrant.json"
-  bm25_cache: "C:/Users/e.valov/testt/db_chroma/chroma_db_unified_master_v3/bm25_cache_unified_v3.pkl"
   docs_base_urls:
     r500_html: "https://reglab.ru/upload/materialy-kursa/"
     astraregul_html: "https://reglab.ru/upload/rukovodstvo-polzovatelya/"
