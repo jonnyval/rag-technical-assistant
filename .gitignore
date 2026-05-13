@@ -1,0 +1,54 @@
+# Виртуальные окружения
+venv/
+.venv/
+new_ml_env/
+rag_langchain/
+
+# Конфиденциальные настройки и ключи (Groq, GigaChat, Gemini)
+.env
+.env.local
+
+# Локальные базы данных и кэш
+data/
+reports/
+drant_backup/
+notebooks/
+result_test_auto/
+sandbox/
+vector_dbs/
+папка для копирования в нейронку/
+папка для копирования в нейронку — копия/
+benchmark_results/
+scripts/test_tickets_search.py
+rag.zip
+scripts/run_autotest_qdrant.py
+scripts/run_autotest_qdrant_hyde.py
+scripts/benchmark_yandex_models.py
+scripts/download_tickets_json.py
+scripts/migrate_config.py
+
+src/document_processing/parsers_tickets_with_llm_old.py
+src/document_processing/parsers_tickets.py
+
+CODE_REVIEW.md
+IMPLEMENTATION_SUMMARY.md
+QUICKSTART.md
+
+.config_backups/
+chroma_db/
+bm25_cache/
+*.sqlite3
+
+# Кэш Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE и среды разработки
+.vscode/
+.idea/
+.ipynb_checkpoints/
+
+# Временные файлы операционной системы
+.DS_Store
+Thumbs.db
