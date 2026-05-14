@@ -15,6 +15,8 @@ from src.engine import RAGEngine
 CACHE_DIR = PROJECT_ROOT / "data" / "llm_cache_tickets"
 
 def main():
+    """Загружает перенесенный LLM-кэш тикетов и добавляет документы в векторную базу."""
+
     print("=== РАБОЧИЙ ПК: ВЕКТОРИЗАЦИЯ И ЗАГРУЗКА В БАЗУ ===")
     
     # КРИТИЧЕСКИ ВАЖНО: Выключаем LLM-обработку! 

@@ -1,0 +1,250 @@
+# ==========================================
+# ⚙️ КОНФИГУРАЦИЯ RAG СИСТЕМЫ
+# ==========================================
+# Версия: 2.1 (исправлены несоответствия со скриптами)
+# Дата обновления: 2026-05-05
+
+# === ОКРУЖЕНИЕ ===
+environment: "development"  # development | staging | production
+
+# === ПРОВАЙДЕРЫ LLM (унифицированная конфигурация) ===
+providers:
+  llm:
+    # Активный провайдер: groq | gemini | gigachat | ollama
+    active: "gemini"
+    
+    # Таймауты и повторные попытки
+    timeout_seconds: 30
+    max_retries: 3
+    
+    # Конфигурация для каждого провайдера
+    configs:
+      # ===== GROQ (Рекомендуется для быстроты) =====
+      groq:
+        model: "meta-llama/llama-4-scout-17b-16e-instruct"
+        base_url: "https://api.groq.com/openai/v1"
+        api_keys: "${GROQ_API_KEYS}"  # Загружается из .env (список через запятую)
+        description: "Быстрая облачная LLM от Groq (рекомендуется)"
+      
+      # ===== GEMINI (Мощная, поддерживает function_calling) =====
+      gemini:
+        model: "gemini-2.5-flash"
+        api_keys: "${GOOGLE_API_KEYS}"  # Загружается из .env
+        description: "Google Gemini - мощная и быстрая"
+      
+      # ===== GIGACHAT (Русский язык) =====
+      gigachat:
+        model: "GigaChat-2"
+        credentials: "${GIGACHAT_CREDENTIALS}"  # Загружается из .env (JSON)
+        verify_ssl: false
+        description: "GigaChat - специализирована для русского языка"
+      
+      # ===== OLLAMA (Локальная LLM) =====
+      ollama:
+        model: "qwen3:8b"
+        base_url: "http://localhost:11434/v1"  # Переопределяется для production
+        description: "Локальная LLM (требует Ollama на машине)"
+
+# === БАЗЫ ДАННЫХ (Унифицированная конфигурация) ===
+storage:
+  vector_db:
+    # Активная база: qdrant_v2_docker | qdrant_v1 | qdrant_tickets_test
+    active: "qdrant_v2_docker"
+    second_db: "qdrant_v2_docker" 
+    # Глобальные таймауты
+    timeout_seconds: 10
+    
+    # Конфигурация для каждой БД
+    backends:
+      # ===== Qdrant V2 (Docker) - основная =====
+      qdrant_v2_docker:
+        type: "qdrant"
+        url: "http://localhost:6333"  # Docker контейнер
+        collection: "reglab_tech_docs_v2_prefix_v2_prefix" # reglab_tech_docs_v2_prefix | reglab_tech_docs_v2_prefix_v2_prefix
+        
+        # Хранилище для родительских документов
+        parent_store:
+          type: "sqlite"
+          path: "vector_dbs/qdrant_v2_qwen3_hybrid/parents.db"
+        
+        description: "Основная база (Docker), гибридный поиск"
+      
+      # ===== Qdrant V1 (локальная) =====
+      qdrant_v1:
+        type: "qdrant"
+        path: "data/vector_dbs/qdrant_v1_qwen3_hybrid"
+        collection: "tech_docs_reglab"
+        
+        parent_store:
+          type: "sqlite"
+          path: "data/vector_dbs/qdrant_v1_qwen3_hybrid/parent_docstore"
+        
+        description: "Локальная Qdrant V1"
+      
+      # ===== Qdrant для тикетов (тестирование) =====
+      qdrant_tickets_test:
+        type: "qdrant"
+        url: "http://localhost:6333"
+        collection: "tickets_test_collection"
+        
+        parent_store:
+          type: "sqlite"
+          path: "vector_dbs/tickets_test/parents.db"
+        
+        description: "Для тестирования поиска по тикетам"
+
+# === МОДЕЛИ (Эмбеддинги и реранкеры) ===
+models:
+  embedding:
+    # Активная модель: qwen3 | bge_m3 | e5_large
+    active: "qwen3"
+    device: "cuda"  # cuda | cpu
+    
+    # Доступные модели эмбеддингов
+    available:
+      qwen3:
+        name: "Qwen/Qwen3-Embedding-0.6B"
+        dimension: 1024
+        languages: ["russian", "english", "multilingual"]
+        notes: "Легкая, быстрая, мультиязычная"
+      
+      bge_m3:
+        name: "BAAI/bge-m3"
+        dimension: 1024
+        languages: ["russian", "english", "multilingual"]
+        notes: "Мощная, поддерживает BM25 разреживание"
+      
+      e5_large:
+        name: "intfloat/multilingual-e5-large"
+        dimension: 1024
+        languages: ["russian", "english", "multilingual"]
+        notes: "Качественная для мультиязычного поиска"
+
+  reranker:
+    # Активный реранкер
+    active: "bge_v2_m3"
+    
+    # Доступные реранкеры
+    available:
+      bge_base:
+        name: "BAAI/bge-reranker-base"
+        notes: "Легкий реранкер"
+      
+      bge_large:
+        name: "BAAI/bge-reranker-large"
+        notes: "Более мощный реранкер"
+      
+      bge_v2_m3:
+        name: "BAAI/bge-reranker-v2-m3"
+        notes: "Лучший для мультиязычных текстов (рекомендуется)"
+
+# === RETRIEVAL (Поиск и ранжирование) ===
+retrieval:
+  # Параметры поиска
+  top_k_retrieval: 30      # Сколько чанков достать из БД
+  top_k_final: 3           # Сколько финальных документов отправить в LLM
+  rerank_threshold: 0.05   # Минимальный score после реранжирования
+  
+  use_reranker: false       # Загружать и использовать реранкер (false = выключить, использовать порядок векторного скора)
+  use_litm: true           # Использовать Lost-in-the-Middle сортировку
+  use_hyde: false          # Использовать HyDE (Hypothetical Document Embeddings)
+  
+  # Параметры чанкинга (Parent-Child)
+  chunking:
+    child_chunk_size: 400      # Размер чанка для поиска
+    child_chunk_overlap: 50    # Перекрытие между чанками
+    description: "Меньшие чанки для поиска, больше контекста из родителя"
+
+# === ПРИЛОЖЕНИЯ (разные юзкейсы) ===
+applications:
+  # ===== QA система (основное приложение) =====
+  qa_system:
+    name: "Основная Q&A система"
+    llm: "groq"                    # Ссылается на providers.llm.configs
+    embedding: "qwen3"             # Ссылается на models.embedding.available
+    vector_db: "qdrant_v2_docker"  # Ссылается на storage.vector_db.backends
+    description: "Основная RAG система для ответов на вопросы"
+  
+  # ===== Система обработки тикетов =====
+  support_tickets:
+    name: "Обработка технических тикетов"
+    llm: "ollama"                  # Провайдер для обогащения тикетов (ticket_active_llm)
+    embedding: "qwen3"
+    vector_db: "qdrant_tickets_test"
+    
+    # Параметры для обработки тикетов
+    processing:
+      llm_prompt: "Выдели симптомы проблемы, шаги диагностики и решение из текста технического тикета:\n\n"
+      indexing_prefix: "Техническое обращение: диагностика и решение проблемы оборудования АstraRegul."
+      root_breadcrumb: "Техподдержка > РегЛаб >"
+      # Включить LLM-обогащение метаданных (symptoms/solution) для закрытых тикетов
+      # ВНИМАНИЕ: при включении каждый закрытый тикет делает запрос к LLM — увеличивает время ингеста
+      enable_smart_metadata: false
+    
+    description: "Система для анализа и индексирования технических обращений"
+  
+  # ===== Система оценки ответов =====
+  evaluation:
+    name: "Автоматическая оценка качества ответов"
+    judge_llm: "gemini"            # LLM для проверки корректности ответов
+    threshold_cosine: 0.82         # Порог косинусного сходства
+    description: "Система для оценки качества ответов RAG"
+
+# === ДАННЫЕ И ПУТИ (все пути в одном месте) ===
+data:
+  # Локальные исходные директории (для ингеста)
+  # ВАЖНО: ключ "support_tickets" (без _json) — именно так его ищет run_ingest_qdrant.py
+  source_directories:
+    r500_docx: "data/source_docs/docs_word/R500"
+    r500s_docx: "data/source_docs/docs_word/r500s"
+    metod_docx: "data/source_docs/docs_word/metod"
+    
+    r500_html: "data/source_docs/docs_html/RX00 HTML"
+    astraregul_html: "data/source_docs/docs_html/Astra.Documentation"
+    
+    # Ключ должен называться "support_tickets" — скрипт ингеста ищет именно его
+    support_tickets: "data/source_docs/docs_json/tickets"
+  
+  # Удалённые источники (base URL для HTML-ссылок в документах)
+  # Ключи: <source_type>_url, config.py приводит их к виду <source_type>
+  remote_sources:
+    r500_html_url: "https://reglab.ru/upload/materialy-kursa/"
+    astraregul_html_url: "https://reglab.ru/upload/rukovodstvo-polzovatelya/"
+    support_tickets_url: "https://support.reglab.ru/tasks/"
+  
+  # Кэши и вспомогательные файлы
+  caches:
+    hash_registry: "data/file_hashes_qdrant.json"    # Реестр хэшей (для отслеживания изменений)
+    bm25_cache: "data/bm25_caches/cache.pkl"          # Кэш BM25 индексов
+    images_output: "data/persistent_images"           # Сохранённые изображения из документов
+
+# === АВТОТЕСТИРОВАНИЕ ===
+testing:
+  # Лимит вопросов на файл (null = обрабатывать все)
+  max_questions_per_file: 20
+
+# === ИНТЕРФЕЙС (Streamlit) ===
+ui:
+  show_manual_filter: false  # Показывать фильтр по оборудованию
+
+# === ОТЛАДКА И ПРОФИЛИРОВАНИЕ ===
+debug:
+  enable_profiling: false # Включить таймеры для каждого компонента
+  log_level: "INFO"        # DEBUG | INFO | WARNING | ERROR
+  
+  # При необходимости дебага:
+  # enable_profiling: true
+  # log_level: "DEBUG"
+
+# === ЛОГИРОВАНИЕ ВОПРОСОВ (полный аудит) ===
+# Управляется через src/logger.py — см. QUICKSTART.md
+# При log_level: DEBUG в файл пишется полный контекст каждого запроса.
+
+# === ТРЕБУЕМЫЕ ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ ===
+# Перед запуском убедитесь, что эти переменные установлены в .env:
+#
+# GROQ_API_KEYS=key1,key2,key3              # Список ключей GROQ (запятая разделяет)
+# GOOGLE_API_KEYS=key1,key2                 # Список ключей Google Gemini
+# GIGACHAT_CREDENTIALS={"key": "value"}     # JSON с учетными данными GigaChat
+#
+# Если в .env переменная не найдена, будет ошибка при инициализации!

@@ -23,11 +23,15 @@ from src.logger import log
 # 🧩 СХЕМЫ И МАТЕМАТИКА
 # ==========================================
 class JudgeSchema(BaseModel):
+    """Структура оценки ответа: числовой балл и краткий комментарий судьи."""
+
     """Схема вердикта технического судьи."""
     is_correct: bool = Field(description="Смысл ответа совпадает с эталоном? true/false.")
     reasoning: str = Field(description="Краткое обоснование решения (1-2 предложения).")
 
 def cosine_similarity(vec1: list, vec2: list) -> float:
+    """Считает косинусную близость двух embedding-векторов."""
+
     """Вычисляет косинусное расстояние между двумя векторами."""
     a, b = np.array(vec1), np.array(vec2)
     norm_a = np.linalg.norm(a)
@@ -40,7 +44,11 @@ def cosine_similarity(vec1: list, vec2: list) -> float:
 # 🚀 УМНЫЙ ОЦЕНЩИК (COSINE + LLM JUDGE)
 # ==========================================
 class UnifiedEvaluator:
+    """Оценивает ответы RAG по семантической близости, LLM-судье и точности выбора варианта."""
+
     def __init__(self, threshold: float = 0.82):
+        """Настраивает порог точности и пути к входным/выходным данным оценщика."""
+
         self.db_name = settings.active_db_name
         self.llm_name = settings.active_llm
         self.threshold = threshold
@@ -60,6 +68,8 @@ class UnifiedEvaluator:
         self.judge_chain = None
 
     def _init_models(self):
+        """Загружает embedding-модель и LLM-судью, если они доступны в текущей конфигурации."""
+
         log.info(f"📥 Загрузка модели эмбеддингов: {settings.embedding_model_name}...")
         self.emb_model = HuggingFaceEmbeddings(
             model_name=settings.embedding_model_name,
@@ -141,11 +151,15 @@ class UnifiedEvaluator:
         self.judge_chain = prompt | judge_llm
 
     def extract_option(self, text: str):
+        """Извлекает выбранный вариант ответа из текста модели."""
+
         """Пытается извлечь букву варианта ответа (например, 'а', 'б', 'в', 'г')."""
         match = re.search(r'^([а-яa-z])\)', text.strip().lower())
         return match.group(1) if match else None
 
     def run(self):
+        """Выполняет оценку всех результатов автотеста и собирает статистику качества."""
+
         if not self.results_dir.exists():
             log.error(f"❌ Папка результатов {self.results_dir} не найдена!")
             return
@@ -251,6 +265,8 @@ class UnifiedEvaluator:
         self._save_reports(full_results, incorrect_results, stats_by_file)
 
     def _save_reports(self, full_data, incorrect_data, stats):
+        """Сохраняет полный отчет, ошибки и агрегированную статистику оценивания."""
+
         """Сохраняет полный дамп, ошибки и генерирует CSV-сводку с таймстампами."""
         
         # 1. Сохраняем полный отчет

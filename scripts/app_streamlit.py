@@ -31,6 +31,8 @@ def get_engine():
 # 🖥 ИНТЕРФЕЙС STREAMLIT
 # ==========================================
 def main():
+    """Запускает Streamlit-интерфейс для ручного общения с RAG-системой."""
+
     st.set_page_config(page_title="RegLab AI", layout="wide")
     st.title("🤖 База знаний РегЛаб (Qdrant Production)")
     

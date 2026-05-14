@@ -36,6 +36,8 @@ AUDIT_LOG_FILE  = LOG_DIR / "query_audit.jsonl"   # Один JSON на стро�
 # ОСНОВНОЙ ЛОГГЕР
 # ─────────────────────────────────────────────
 def setup_logger() -> logging.Logger:
+    """Настраивает основной логгер приложения для консоли и файлового вывода."""
+
     logger = logging.getLogger("RegLabRAG")
     logger.setLevel(logging.DEBUG)
 

@@ -50,6 +50,26 @@ class RAGReasoningSchema(BaseModel):
     )
 
 
+class SimilarTicketSummary(BaseModel):
+    """Краткое описание похожего обращения из базы тикетов."""
+    ticket_id: str = Field(description="Номер обращения, например RL-12345")
+    source_file: str = Field(description="Файл или источник обращения")
+    problem_summary: str = Field(description="Краткое саммари проблемы")
+    solution_summary: str = Field(description="Краткое саммари решения или действий поддержки")
+    relevance_reason: str = Field(description="Почему обращение похоже на текущую заявку")
+
+
+class SupportPrivateResponse(BaseModel):
+    """Приватная подсказка ИИ для сотрудника техподдержки."""
+    user_intent: str = Field(description="Что клиент, вероятно, хочет решить")
+    docs_answer: str = Field(description="Информация из документации. Если прямого решения нет, перечисли релевантные темы.")
+    related_topics: List[str] = Field(default=[], description="Темы из документации, которые относятся к обращению")
+    similar_tickets: List[SimilarTicketSummary] = Field(default=[], description="Похожие обращения из базы тикетов")
+    missing_context: str = Field(description="Каких данных не хватает для уверенного ответа")
+    draft_private_comment: str = Field(description="Готовый приватный комментарий для сотрудника ТП в Markdown")
+    confidence: str = Field(description="low | medium | high")
+
+
 # ==========================================
 # 🛠 ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # ==========================================
@@ -58,6 +78,8 @@ class KeyRotationCallbackHandler(BaseCallbackHandler):
     """Логирует ошибки LLM при ротации API ключей."""
     
     def __init__(self, key_index: int = 0):
+        """Запоминает индекс API-ключа, на котором выполняется текущий LLM-вызов."""
+
         self.key_index = key_index
 
     def on_llm_error(self, error: BaseException, **kwargs) -> None:
@@ -99,6 +121,24 @@ def format_docs(docs: List) -> str:
     return "\n\n".join(formatted)
 
 
+def format_ticket_docs(docs: List) -> str:
+    """Formats support tickets with stable IDs for the LLM."""
+    if not docs:
+        return ""
+
+    formatted = []
+    for d in docs:
+        meta = d.metadata if hasattr(d, "metadata") else {}
+        ticket_id = meta.get("ticket_id") or meta.get("source_file", "Unknown")
+        source_file = meta.get("source_file", "Unknown")
+        ticket_url = meta.get("ticket_url", "")
+        content = d.page_content if hasattr(d, "page_content") else str(d)
+        header = f"[TICKET | id: {ticket_id} | file: {source_file} | url: {ticket_url}]"
+        formatted.append(f"{header}\n{content}")
+
+    return "\n\n".join(formatted)
+
+
 # ==========================================
 # 🚀 ЯДРО RAG-СИСТЕМЫ
 # ==========================================
@@ -114,9 +154,11 @@ class RAGEngine:
     """
 
     def __init__(self):
+        """Собирает retriever, LLM-цепочки и служебное состояние RAG-движка."""
+
         try:
             log.info("🚀 Инициализация RAGEngine...")
-            self.retriever, self.sgr_chain = self._build_pipeline()
+            self.retriever, self.sgr_chain, self.support_chain = self._build_pipeline()
             self._last_docs: List = []
             log.info("✅ RAGEngine успешно инициализирован.")
         except Exception as e:
@@ -287,11 +329,100 @@ class RAGEngine:
             )
             log.debug("✓ SGR цепочка собрана")
 
-            return retriever, sgr_chain
+            support_prompt_template = ChatPromptTemplate.from_template("""
+Ты помощник сотрудника технической поддержки. Твой ответ является ПРИВАТНОЙ подсказкой для инженера, а не публичным ответом клиенту.
+
+Нужно строго разделить:
+1. Информацию из официальной документации.
+2. Похожие обращения из базы тикетов.
+3. Черновик приватного комментария для сотрудника.
+
+Правила:
+- Не утверждай, что проблема точно решена, если документация или тикеты не дают прямого решения.
+- Если документация не дает точного решения, дай полезную общую информацию по темам из обращения.
+- Тикеты используй как опыт прошлых кейсов, а не как официальную инструкцию.
+- Для каждого похожего тикета укажи номер обращения, кратко проблему, кратко решение и почему он похож.
+- Если данных мало, явно напиши, что нужно уточнить.
+- Верни валидный JSON по заданной схеме.
+
+Заявка:
+{input}
+
+Официальная документация:
+{docs_context}
+
+Похожие обращения:
+{tickets_context}
+""")
+
+            support_structured_llm = llm.with_structured_output(
+                SupportPrivateResponse,
+                method="json_mode" if settings.active_llm != "gigachat" else None,
+            ) if settings.active_llm != "gigachat" else llm.with_structured_output(SupportPrivateResponse)
+
+            support_chain = support_prompt_template | support_structured_llm
+            log.debug("✓ Support private chain собрана")
+
+            return retriever, sgr_chain, support_chain
 
         except Exception as e:
             log.error(f"❌ Ошибка при построении pipeline: {e}", exc_info=True)
             raise RuntimeError(f"Failed to build RAG pipeline: {str(e)}") from e
+
+    def process_support_ticket(self, query: str) -> SupportPrivateResponse:
+        """Builds a private support hint with separate docs and ticket retrieval."""
+        if not query:
+            raise ValueError("query не может быть пустым")
+        if not isinstance(query, str):
+            raise ValueError(f"query должен быть строкой, получен {type(query).__name__}")
+        query = query.strip()
+        if not query:
+            raise ValueError("query содержит только пробелы")
+
+        start = time.perf_counter()
+        docs: List = []
+        tickets: List = []
+
+        try:
+            log.info(f"🔄 Приватная подсказка ТП: обработка заявки ({len(query)} символов)")
+
+            docs = self.retriever.retrieve_docs(query)
+            tickets = self.retriever.retrieve_tickets(query)
+
+            response = self.support_chain.invoke({
+                "input": query,
+                "docs_context": format_docs(docs),
+                "tickets_context": format_ticket_docs(tickets),
+            })
+
+            elapsed = time.perf_counter() - start
+            log.info(
+                f"✅ Приватная подсказка готова за {elapsed:.2f}с "
+                f"| docs={len(docs)} | tickets={len(tickets)}"
+            )
+
+            log_query_audit(
+                query=query,
+                equipment_filter=None,
+                retrieved_docs=docs + tickets,
+                response=response,
+                elapsed_sec=elapsed,
+            )
+
+            return response
+
+        except Exception as e:
+            elapsed = time.perf_counter() - start
+            log.error(f"❌ Ошибка при подготовке приватной подсказки: {e}", exc_info=True)
+            log_query_audit(
+                query=query,
+                equipment_filter=None,
+                retrieved_docs=docs + tickets,
+                response=None,
+                elapsed_sec=elapsed,
+                extra={"error": str(e)},
+            )
+            raise RuntimeError(f"Failed to process support ticket: {str(e)}") from e
 
     def process_query(
         self,
@@ -318,6 +449,17 @@ class RAGEngine:
             ValueError:    Если query пустой или не строка
             RuntimeError:  Если произошла ошибка при генерации ответа
         """
+        support_response = self.process_support_ticket(query)
+        return RAGReasoningSchema(
+            user_intent=support_response.user_intent,
+            extracted_facts=[
+                FactExtraction(source_file="Документация", fact=support_response.docs_answer)
+            ],
+            missing_context=support_response.missing_context,
+            final_answer=support_response.draft_private_comment,
+            relevant_images=[],
+        )
+
         # === ВАЛИДАЦИЯ ===
         if not query:
             raise ValueError("query не может быть пустым")

@@ -52,6 +52,8 @@ FILTER_EXCLUDE_REQUESTERS = [
 # 2. ПОЛУЧЕНИЕ "РАЗРЕШЕННЫХ" ID
 # ==========================================
 def get_valid_ids_from_csv(csv_path: str) -> set:
+    """Читает CSV-выгрузку портала и возвращает ID тикетов, подходящих под фильтры."""
+
     print(f"📊 Чтение и фильтрация справочника: {csv_path}")
     try:
         df = pd.read_csv(csv_path, sep=';', on_bad_lines='skip')
@@ -86,6 +88,8 @@ def get_valid_ids_from_csv(csv_path: str) -> set:
 # 3. ОСНОВНАЯ ЛОГИКА
 # ==========================================
 def main():
+    """Генерирует LLM-кэш по отфильтрованным тикетам для переноса на рабочую машину."""
+
     print("=== ДОМАШНИЙ ПК: ГЕНЕРАЦИЯ LLM-КЭША (ПО ФАЙЛАМ) ===")
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)

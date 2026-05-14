@@ -24,7 +24,9 @@ from langchain_core.documents import Document
 try:
     from src.config import settings
 except ImportError:
-    class DummySettings:
+class DummySettings:
+    """Минимальные настройки для запуска парсера тикетов вне основного проекта."""
+
         enable_smart_metadata = True
         ticket_indexing_prefix = "Техническое обращение: диагностика и решение проблемы."
         ticket_active_llm = "groq"
@@ -45,12 +47,16 @@ _SYSTEM_NOISE = re.compile(r'^(SimpleLogic:|Статус изменен на|Р�
 
 # --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 def _strip_html(text: str) -> str:
+    """Удаляет HTML-разметку из поля тикета и нормализует пробелы."""
+
     if not text or not isinstance(text, str): return ""
     text = re.sub(r'<br\s*/?>', '\n', text)
     text = re.sub(r'<[^>]+>', ' ', text)
     return re.sub(r'\s+', ' ', text).strip()
 
 def _remove_pii(text: str) -> str:
+    """Маскирует ФИО, email, телефоны и служебные подписи в тексте комментария."""
+
     if not text: return text
     text = _FIO_PATTERN.sub("[ФИО СКРЫТО]", text)
     text = re.sub(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', '[EMAIL]', text)
@@ -58,6 +64,8 @@ def _remove_pii(text: str) -> str:
     return _ADMIN_PHRASES.sub("", text)
 
 def _extract_comments(ticket_data: dict) -> List[str]:
+    """Достает пользовательские и инженерные комментарии из JSON тикета."""
+
     comments = []
     raw_comments = ticket_data.get('comments_list', [])
     if not isinstance(raw_comments, list): return comments
@@ -81,6 +89,8 @@ def _extract_comments(ticket_data: dict) -> List[str]:
 
 # --- ФУНКЦИЯ LLM (Ollama & Groq с ротацией и JSON) ---
 def _enrich_ticket_with_llm(title: str, description: str, comments: List[str]) -> Dict[str, str]:
+    """Получает от LLM краткие симптомы и решение для fact-документа тикета."""
+
     global _current_key_idx
     provider = getattr(settings, "ticket_active_llm", "ollama").lower()
     
@@ -230,6 +240,8 @@ def _enrich_ticket_with_llm(title: str, description: str, comments: List[str]) -
 
 # --- ОСНОВНАЯ ФУНКЦИЯ ПАРСИНГА ---
 def process_ticket_file(file_path: Path, source_type: str = "support_tickets", portal_base_url: str = "https://support.prosyst.ru") -> List[Document]:
+    """Преобразует JSON тикета в card/fact документы для индексации в Qdrant."""
+
     file_name = file_path.name
     ticket_id_match = re.search(r'\[([A-Z]+-\d+)\]', file_name)
     ticket_id = ticket_id_match.group(1) if ticket_id_match else "UNKNOWN"

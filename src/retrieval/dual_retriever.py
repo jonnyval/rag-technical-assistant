@@ -77,6 +77,8 @@ class DualRetriever(BaseRetriever):
     )
 
     class Config:
+        """Разрешает хранить в Pydantic-модели внешние объекты LangChain и reranker."""
+
         arbitrary_types_allowed = True
 
     # ------------------------------------------------------------------
@@ -84,6 +86,8 @@ class DualRetriever(BaseRetriever):
     # ------------------------------------------------------------------
 
     def _build_search_kwargs(self, k: int, apply_equipment_filter: bool) -> Dict:
+        """Формирует параметры Qdrant-поиска, включая опциональный фильтр оборудования."""
+
         kwargs: Dict = {"k": k}
         if (
             apply_equipment_filter
@@ -167,6 +171,60 @@ class DualRetriever(BaseRetriever):
         log.debug(f"  [{db_label}] извлечено {len(result)} документов (включая документы без родителей)")
         return result
 
+    def _rank_children(self, query: str, children: List[Document]) -> List[Document]:
+        """Ранжирует дочерние чанки внутри одного источника, не смешивая документацию и тикеты."""
+        if not children:
+            return []
+
+        if self.reranker_model is not None:
+            with TimeProfiler(f"CrossEncoder Reranking ({len(children)} chunks)"):
+                pairs = [[query, d.page_content] for d in children]
+                scores = self.reranker_model.predict(pairs)
+
+                scored: List[Document] = []
+                for doc, score in zip(children, scores):
+                    score = float(score)
+                    if score >= self.rerank_threshold:
+                        doc.metadata["rerank_score"] = score
+                        scored.append(doc)
+
+                scored.sort(key=lambda x: x.metadata["rerank_score"], reverse=True)
+                return scored[: self.top_k_final]
+
+        for doc in children:
+            doc.metadata.setdefault("rerank_score", 0.0)
+        return children[: self.top_k_final]
+
+    def retrieve_docs(self, query: str) -> List[Document]:
+        """Ищет только по коллекции документации без фильтра по оборудованию."""
+        k = self.docs_retriever.search_kwargs.get("k", 30)
+        children = self._search_children(
+            self.docs_retriever,
+            query,
+            k,
+            apply_filter=False,
+            db_label="docs",
+        )
+        top_children = self._rank_children(query, children)
+        docs = self._fetch_parents(self.docs_retriever, top_children, "docs")
+        docs.sort(key=lambda x: x.metadata.get("rerank_score", 0), reverse=True)
+        return docs
+
+    def retrieve_tickets(self, query: str) -> List[Document]:
+        """Ищет только по коллекции обращений технической поддержки."""
+        k = self.tickets_retriever.search_kwargs.get("k", 30)
+        children = self._search_children(
+            self.tickets_retriever,
+            query,
+            k,
+            apply_filter=False,
+            db_label="tickets",
+        )
+        top_children = self._rank_children(query, children)
+        tickets = self._fetch_parents(self.tickets_retriever, top_children, "tickets")
+        tickets.sort(key=lambda x: x.metadata.get("rerank_score", 0), reverse=True)
+        return tickets
+
     # ------------------------------------------------------------------
     # Основной метод
     # ------------------------------------------------------------------
@@ -177,11 +235,12 @@ class DualRetriever(BaseRetriever):
         *,
         run_manager: CallbackManagerForRetrieverRun,
     ) -> List[Document]:
+        """Выполняет совместимый с LangChain смешанный поиск по docs и tickets."""
 
         k = self.docs_retriever.search_kwargs.get("k", 30)
 
         # === 1. ПОИСК В ОБЕИХ БД ===
-        docs_children    = self._search_children(self.docs_retriever,    query, k, apply_filter=True,  db_label="docs")
+        docs_children    = self._search_children(self.docs_retriever,    query, k, apply_filter=False, db_label="docs")
         tickets_children = self._search_children(self.tickets_retriever, query, k, apply_filter=False, db_label="tickets")
 
         all_children = docs_children + tickets_children
@@ -250,6 +309,8 @@ def build_dual_retriever(
     dense_embeddings: HuggingFaceEmbeddings,
     reranker_model: Any,
 ) -> DualRetriever:
+    """Создает dual-retriever, который умеет отдельно искать по документации и тикетам."""
+
     """Строит DualRetriever из двух бэкендов, описанных в config.yaml.
 
     Args:

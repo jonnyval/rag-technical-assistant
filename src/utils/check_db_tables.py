@@ -6,6 +6,8 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 from src.config import settings
 
 def main():
+    """Печатает таблицы SQLite-хранилища parent-документов для быстрой проверки."""
+
     db_path = settings.parent_store_path
     print(f"Путь к БД: {db_path}")
 

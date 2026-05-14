@@ -14,6 +14,8 @@ from src.document_processing.metadata_extractor import extract_smart_metadata
 logger = logging.getLogger(__name__)
 
 def detect_equipment_type(file_path: Path, source_type: str) -> str:
+    """Определяет тип оборудования по имени файла и типу источника документации."""
+
     file_name_lower = file_path.name.lower()
     if 'astraregul' in file_name_lower or 'astra.regul' in file_name_lower: return "AstraRegul"
     elif 'r500s' in file_name_lower or 'safety' in file_name_lower: return "R500S"
@@ -26,8 +28,12 @@ def detect_equipment_type(file_path: Path, source_type: str) -> str:
     return "General"
 
 def get_image_converter(images_out_dir: str):
+    """Создает callback для Mammoth, который сохраняет картинки DOCX на диск."""
+
     os.makedirs(images_out_dir, exist_ok=True)
     def convert_image(image):
+        """Сохраняет одно встроенное изображение DOCX и возвращает путь для HTML."""
+
         ext = image.content_type.split("/")[-1]
         img_name = f"doc_img_{uuid.uuid4().hex[:8]}.{ext}"
         img_path = os.path.join(images_out_dir, img_name)
@@ -45,6 +51,8 @@ def process_docx_file(
     source_type: str, 
     images_out_dir: str
 ) -> List[Document]:
+    """Парсит DOCX в семантические parent-документы с заголовками и metadata."""
+
     file_name = file_path.name
     documents = []
     equipment_type = detect_equipment_type(file_path, source_type)
@@ -187,6 +195,8 @@ def process_docx_file(
 # ТРЕК 2: HTML
 # ==========================================
 def detect_library_type(text: str, filename: str) -> str:
+    """Определяет библиотеку/раздел HTML-документа по хлебным крошкам и имени файла."""
+
     filename_lower = filename.lower()
     text_sample = text[:2000].upper()
     if 'pstechmt' in filename_lower or 'МЕТАЛЛУРГИИ' in text_sample: return 'PsTechMT'
@@ -198,6 +208,8 @@ def detect_library_type(text: str, filename: str) -> str:
     return 'Универсальная'
 
 def extract_function_block_name(text: str) -> str:
+    """Извлекает имена функциональных блоков из текста или таблиц документации."""
+
     found_names = set()
     for pattern in [r'(FB_[A-Z0-9_]+)', r'\|\s*([A-Z0-9_]+)\s*\|', r'([A-Z0-9_]+)\s*\|\s*[А-Я]']:
         for fb_match in re.finditer(pattern, text):
@@ -206,6 +218,8 @@ def extract_function_block_name(text: str) -> str:
     return ", ".join(sorted(found_names)) if found_names else ""
 
 def process_html_file(file_path: Path, source_type: str, base_url: str = "") -> List[Document]:
+    """Парсит HTML-страницу документации в parent-документ с техническими metadata."""
+
     file_name = file_path.name
     equipment_type = detect_equipment_type(file_path, source_type)
     

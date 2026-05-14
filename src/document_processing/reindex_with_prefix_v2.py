@@ -268,6 +268,8 @@ def print_next_steps(new_collection: str, old_collection: str) -> None:
 
 
 def main():
+    """Запускает вторую версию переиндексации с расширенной подготовкой child-чанков."""
+
     log.info("🚀 ЗАПУСК ПЕРЕИНДЕКСАЦИИ С QUERY/DOCUMENT PREFIX")
     log.info(f"Новая коллекция: {NEW_COLLECTION}")
     log.info(f"Старая коллекция (резерв): {settings.collection_name}")

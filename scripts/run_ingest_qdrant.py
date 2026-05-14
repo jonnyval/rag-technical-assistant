@@ -35,12 +35,16 @@ except ImportError:
     has_torch = False
 
 def get_file_hash(filepath: Path) -> str:
+    """Вычисляет MD5-хеш файла, чтобы понять, нужно ли переиндексировать источник."""
+
     hasher = hashlib.md5()
     with open(filepath, 'rb') as f:
         hasher.update(f.read())
     return hasher.hexdigest()
 
 def load_hash_registry() -> Dict[str, dict]:
+    """Загружает реестр уже обработанных файлов и связанных parent_id."""
+
     # ИСПРАВЛЕНО: settings.hash_registry вместо несуществующего свойства
     if os.path.exists(settings.hash_registry):
         try:
@@ -51,12 +55,16 @@ def load_hash_registry() -> Dict[str, dict]:
     return {}
 
 def save_hash_registry(registry: Dict[str, dict]):
+    """Сохраняет реестр хешей после успешной индексации очередного батча."""
+
     if settings.hash_registry:
         os.makedirs(os.path.dirname(settings.hash_registry), exist_ok=True)
         with open(settings.hash_registry, 'w', encoding='utf-8') as f:
             json.dump(registry, f, indent=4)
 
 def main():
+    """Запускает полный ingest: парсинг источников, parent/child нарезку и запись в Qdrant."""
+
     log.info("🚀 ЗАПУСК QDRANT ВЕКТОРИЗАЦИИ (DOCKER + SQLITE + BATCHING)")
 
     log.info(f"Загрузка модели: {settings.embedding_model_name}")

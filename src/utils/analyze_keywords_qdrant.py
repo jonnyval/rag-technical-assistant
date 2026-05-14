@@ -11,6 +11,8 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 from src.config import settings
 
 def main():
+    """Анализирует частотные ключевые слова в parent-документах Qdrant/SQLite."""
+
     # Путь берется из config.yaml (active: qdrant_v2_docker)
     db_path = settings.parent_store_path 
     

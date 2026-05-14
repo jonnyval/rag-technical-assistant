@@ -17,6 +17,8 @@ from src.engine import RAGEngine
 # 📝 АВТО-ДОКУМЕНТИРОВАНИЕ ТЕСТА
 # ==========================================
 def generate_test_readme(output_dir: Path):
+    """Создает README с описанием структуры результатов автотеста RAGEngine."""
+
     """Создает README.md с настройками текущего запуска, скрывая API ключи."""
     readme_path = output_dir / "README.md"
     
@@ -57,6 +59,8 @@ def generate_test_readme(output_dir: Path):
 # ⚙️ ЛОГИКА АВТОТЕСТИРОВАНИЯ
 # ==========================================
 def main():
+    """Запускает автотест через RAGEngine и сохраняет ответы, источники и аудит по вопросам."""
+
     INPUT_DIR = Path("data/50_questions")
     OUTPUT_DIR = Path("result_test_auto") / settings.active_db_name
     

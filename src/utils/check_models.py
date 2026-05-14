@@ -10,6 +10,8 @@ warnings.filterwarnings("ignore")
 load_dotenv()
 
 def check_groq_models():
+    """Проверяет доступность моделей Groq через первый ключ из GROQ_API_KEYS."""
+
     print("=== Доступные модели GROQ ===")
     keys_str = os.getenv("GROQ_API_KEYS", "")
     keys = [k.strip() for k in keys_str.split(",") if k.strip()]
@@ -35,6 +37,8 @@ def check_groq_models():
 
 
 def check_gemini_models():
+    """Проверяет доступность моделей Gemini через GOOGLE_API_KEY."""
+
     print("=== Доступные модели GEMINI ===")
     api_key = os.getenv("GOOGLE_API_KEY")
     
@@ -55,6 +59,8 @@ def check_gemini_models():
 
 
 def check_gigachat_models():
+    """Проверяет подключение к GigaChat и выводит доступные модели."""
+
     print("=== Доступные модели GIGACHAT ===")
     credentials = os.getenv("GIGACHAT_CREDENTIALS")
     

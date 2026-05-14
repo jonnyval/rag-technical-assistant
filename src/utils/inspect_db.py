@@ -11,6 +11,8 @@ from qdrant_client.http import models
 from src.config import settings
 
 def inspect_chroma_database(db_name: str, db_path: str, collection_name: str):
+    """Показывает несколько документов из локальной Chroma-базы для ручной диагностики."""
+
     """Инспекция для баз данных ChromaDB"""
     try:
         client = chromadb.PersistentClient(path=db_path)
@@ -49,6 +51,8 @@ def inspect_chroma_database(db_name: str, db_path: str, collection_name: str):
 
 
 def inspect_qdrant_database(db_name: str, db_path: str, collection_name: str):
+    """Показывает несколько документов из Qdrant-коллекции для ручной диагностики."""
+
     """Инспекция для баз данных Qdrant"""
     try:
         client = QdrantClient(path=db_path)
@@ -110,6 +114,8 @@ def inspect_qdrant_database(db_name: str, db_path: str, collection_name: str):
 
 
 def print_samples(samples):
+    """Печатает найденные образцы документов с metadata и коротким preview текста."""
+
     """Вспомогательная функция для красивого вывода в консоль"""
     for doc_id, meta, text in samples:
         print(f"\n📄 [ID: {doc_id}]")
@@ -125,6 +131,8 @@ def print_samples(samples):
 
 
 def inspect_database(db_name: str, db_path: str, collection_name: str):
+    """Выбирает тип инспекции по имени/пути базы и запускает соответствующую проверку."""
+
     print(f"\n{'='*80}")
     print(f"🔍 ИНСПЕКЦИЯ БАЗЫ: {db_name.upper()}")
     print(f"📁 Путь: {db_path} | Коллекция: {collection_name}")
@@ -138,6 +146,8 @@ def inspect_database(db_name: str, db_path: str, collection_name: str):
 
 
 def main():
+    """Запускает интерактивную инспекцию всех баз, описанных в конфиге."""
+
     # 1. Проверяем активную базу
     inspect_database(settings.active_db_name, settings.db_path, settings.collection_name)
 

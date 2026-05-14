@@ -4,6 +4,8 @@ import os
 IGNORE_DIRS = {'.git', '.venv', 'venv', '__pycache__', '.idea', '.vscode', 'data'}
 
 def print_tree(directory, prefix=""):
+    """Рекурсивно печатает дерево файлов проекта с учетом списка игнорируемых папок."""
+
     items = sorted(os.listdir(directory))
     # Фильтруем скрытые папки и игнорируемые директории
     items = [i for i in items if i not in IGNORE_DIRS and not (os.path.isdir(os.path.join(directory, i)) and i.startswith('.'))]

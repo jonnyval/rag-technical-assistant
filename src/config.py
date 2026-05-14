@@ -39,6 +39,8 @@ class Settings:
     """Класс для удобного доступа к конфигурации RAG системы."""
     
     def __init__(self, config_path: str = "config.yaml"):
+        """Загружает YAML-конфиг проекта и подготавливает удобные свойства доступа."""
+
         self.config_path = PROJECT_ROOT / config_path
         self._raw_config: Dict[str, Any] = {}
         self._validated_config: Optional['RAGConfig'] = None
@@ -51,6 +53,8 @@ class Settings:
         log.info(f"   БД (docs): {self.active_db_name} | БД (тикеты): {self.second_db_name}")
     
     def _load_config(self) -> None:
+        """Читает config.yaml, валидирует структуру и проверяет обязательные env-переменные."""
+
         if not self.config_path.exists():
             raise FileNotFoundError(
                 f"Config file not found: {self.config_path}\n"

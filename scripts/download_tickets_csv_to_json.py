@@ -88,6 +88,8 @@ BASE_BACKOFF = 5  # секунд
 
 
 def get_cookies_dict():
+    """Преобразует строку COOKIE_STRING в словарь cookies для requests."""
+
     return {k: v for item in COOKIE_STRING.split(';') if '=' in item for k, v in [item.strip().split('=', 1)]}
 
 
@@ -95,6 +97,8 @@ def get_cookies_dict():
 # 3. HTTP-ОБЁРТКА С EXPONENTIAL BACKOFF
 # ==========================================
 def request_with_retry(url, **kwargs):
+    """Выполняет POST-запрос к порталу с повторными попытками при временных ошибках."""
+
     """POST с автоматическим exponential backoff при 429/502/503."""
     for attempt in range(MAX_RETRIES):
         try:
@@ -127,6 +131,8 @@ def request_with_retry(url, **kwargs):
 # 4. ЧТЕНИЕ И ФИЛЬТРАЦИЯ CSV
 # ==========================================
 def get_rl_ids_from_csv(csv_path):
+    """Извлекает список RL-ID из CSV-выгрузки обращений."""
+
     log.info(f"Чтение CSV файла: {csv_path}")
     try:
         df = pd.read_csv(csv_path, sep=';', on_bad_lines='skip')
@@ -163,6 +169,8 @@ def get_rl_ids_from_csv(csv_path):
 # 5. ПОЛУЧЕНИЕ ВСЕХ ID ОДНИМ ЗАПРОСОМ
 # ==========================================
 def build_id_mapping():
+    """Строит соответствие RL-ID -> внутренний ID задачи и исполнитель из API портала."""
+
     """Скачивает легкий список всех тикетов и создает словарь RL-ID -> Internal ID"""
     log.info("Сбор справочника внутренних ID со всех тикетов портала (это займет пару секунд)...")
     mapping = {}
@@ -206,6 +214,8 @@ def build_id_mapping():
 # 6. СКАЧИВАНИЕ И ОБОГАЩЕНИЕ ДАННЫХ
 # ==========================================
 def download_missing_tickets(all_rl_ids):
+    """Скачивает JSON только для тех RL-ID, которых еще нет в локальной папке."""
+
     downloaded_files = {f.name.split(']')[0][1:] for f in OUTPUT_DIR.glob("*.json") if ']' in f.name}
     log.info(f"На диске уже есть {len(downloaded_files)} файлов. Они будут пропущены.")
 

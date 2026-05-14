@@ -16,6 +16,8 @@ OUTPUT_FILE = Path("data/tickets_preview.json")
 PORTAL_URL  = "https://support.prosyst.ru"
 
 def main():
+    """Показывает пример LLM-обработки тикетов без запуска полного ingest."""
+
     print("=== ТЕСТОВЫЙ ПАРСИНГ ТИКЕТОВ (JSON API + РОЛИ) ===")
     print(f"Директория: {TICKETS_DIR}")
     
@@ -65,6 +67,8 @@ def main():
     print("Совет: Откройте этот файл и проверьте, появились ли в тексте теги 👤 [КЛИЕНТ] и 🛠️ [ИНЖЕНЕР].")
 
 def ticket_id_from_file(path):
+    """Извлекает RL-ID из имени файла тикета."""
+
     import re
     match = re.search(r'\[([A-Z]+-\d+)\]', path.name)
     return match.group(1) if match else "???"

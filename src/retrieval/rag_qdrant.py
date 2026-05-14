@@ -52,11 +52,14 @@ class RegLabQdrantRetriever(BaseRetriever):
     _last_hyde_text: str = ""
 
     class Config:
+        """Разрешает использовать произвольные объекты LangChain внутри retriever-модели."""
+
         arbitrary_types_allowed = True
 
     def _get_relevant_documents(
         self, query: str, *, run_manager: CallbackManagerForRetrieverRun
     ) -> List[Document]:
+        """Выполняет поиск по одной Qdrant-базе с опциональным HyDE и reranking."""
 
         k = self.parent_retriever.search_kwargs.get("k", 30)
 
