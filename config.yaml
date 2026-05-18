@@ -11,7 +11,7 @@ environment: "development"  # development | staging | production
 providers:
   llm:
     # Активный провайдер: groq | gemini | gigachat | ollama
-    active: "gemini"
+    active: "groq"
     
     # Таймауты и повторные попытки
     timeout_seconds: 30
@@ -21,7 +21,7 @@ providers:
     configs:
       # ===== GROQ (Рекомендуется для быстроты) =====
       groq:
-        model: "meta-llama/llama-4-scout-17b-16e-instruct"
+        model: "openai/gpt-oss-120b" # openai/gpt-oss-120b | meta-llama/llama-4-scout-17b-16e-instruct
         base_url: "https://api.groq.com/openai/v1"
         api_keys: "${GROQ_API_KEYS}"  # Загружается из .env (список через запятую)
         description: "Быстрая облачная LLM от Groq (рекомендуется)"
@@ -50,7 +50,7 @@ storage:
   vector_db:
     # Активная база: qdrant_v2_docker | qdrant_v1 | qdrant_tickets_test
     active: "qdrant_v2_docker"
-    second_db: "qdrant_v2_docker" 
+    second_db: "qdrant_tickets_test" 
     # Глобальные таймауты
     timeout_seconds: 10
     
@@ -145,7 +145,7 @@ retrieval:
   top_k_final: 3           # Сколько финальных документов отправить в LLM
   rerank_threshold: 0.05   # Минимальный score после реранжирования
   
-  use_reranker: false       # Загружать и использовать реранкер (false = выключить, использовать порядок векторного скора)
+  use_reranker: true      # Загружать и использовать реранкер (false = выключить, использовать порядок векторного скора)
   use_litm: true           # Использовать Lost-in-the-Middle сортировку
   use_hyde: false          # Использовать HyDE (Hypothetical Document Embeddings)
   
@@ -156,6 +156,20 @@ retrieval:
     description: "Меньшие чанки для поиска, больше контекста из родителя"
 
 # === ПРИЛОЖЕНИЯ (разные юзкейсы) ===
+rag_profiles:
+  fast:
+    use_reranker: false
+    top_k_retrieval: 16
+    top_k_final: 3
+    rerank_threshold: 0.05
+    use_litm: false
+  deep:
+    use_reranker: true
+    top_k_retrieval: 24
+    top_k_final: 4
+    rerank_threshold: 0.05
+    use_litm: true
+
 applications:
   # ===== QA система (основное приложение) =====
   qa_system:

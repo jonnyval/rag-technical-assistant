@@ -319,8 +319,12 @@ def process_html_file(file_path: Path, source_type: str, base_url: str = "") -> 
         if smart_meta.get("smart_keywords"):
             final_text += f"\n[КЛЮЧЕВЫЕ СЛОВА: {smart_meta['smart_keywords']}]"
 
+        normalized_base_url = f"{base_url.rstrip('/')}/" if base_url else ""
+
         meta = {
-            'source_file': file_name, 'source_url': f"{base_url}{file_name}" if base_url else "",
+            'source_file': file_name,
+            'source_root': normalized_base_url,
+            'source_url': f"{normalized_base_url}{file_name}" if normalized_base_url else "",
             'page_title': page_title, 'release_version': release_version,    
             'equipment_type': equipment_type, 'library_name': library_key,
             'function_block_name': fb_name, 'breadcrumb_raw': breadcrumb_str,

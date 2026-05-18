@@ -308,6 +308,10 @@ class DualRetriever(BaseRetriever):
 def build_dual_retriever(
     dense_embeddings: HuggingFaceEmbeddings,
     reranker_model: Any,
+    top_k_retrieval: int | None = None,
+    top_k_final: int | None = None,
+    rerank_threshold: float | None = None,
+    use_litm: bool | None = None,
 ) -> DualRetriever:
     """Создает dual-retriever, который умеет отдельно искать по документации и тикетам."""
 
@@ -377,7 +381,7 @@ def build_dual_retriever(
             vectorstore=qdrant,
             docstore=store,
             child_splitter=child_splitter,
-            search_kwargs={"k": settings.top_k_retrieval},
+            search_kwargs={"k": top_k_retrieval or settings.top_k_retrieval},
         )
 
     docs_backend_name    = settings.active_db_name
@@ -392,7 +396,7 @@ def build_dual_retriever(
         docs_retriever=docs_retriever,
         tickets_retriever=tickets_retriever,
         reranker_model=reranker_model,
-        top_k_final=settings.top_k_final,
-        rerank_threshold=settings.rerank_threshold,
-        use_litm=settings.use_litm,
+        top_k_final=top_k_final or settings.top_k_final,
+        rerank_threshold=rerank_threshold if rerank_threshold is not None else settings.rerank_threshold,
+        use_litm=use_litm if use_litm is not None else settings.use_litm,
     )

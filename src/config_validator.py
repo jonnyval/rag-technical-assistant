@@ -164,6 +164,7 @@ class RAGConfig(BaseModel):
     storage: StorageConfig = Field(..., description="Конфигурация хранилища")
     models: ModelsConfig = Field(..., description="Конфигурация моделей")
     retrieval: RetrievalConfig = Field(..., description="Конфигурация retrieval")
+    rag_profiles: Dict[str, Any] = Field(default_factory=dict, description="Open WebUI RAG profiles")
     applications: Dict[str, ApplicationConfig] = Field(..., description="Конфигурация приложений")
     data: Dict[str, Any] = Field(..., description="Данные и пути")
     debug: DebugConfig = Field(default_factory=DebugConfig, description="Конфигурация отладки")
