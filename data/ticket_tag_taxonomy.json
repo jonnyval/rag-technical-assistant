@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "description": "Closed quality-tag taxonomy for Regul and AstraRegul support tickets.",
+  "groups": [
+    {
+      "id": "regul_r050_r100_r200_r400_r500_r600",
+      "title": "Regul R050/R100/R200/R400/R500/R600",
+      "products": ["Regul R050", "Regul R100", "Regul R200", "Regul R400", "Regul R500", "Regul R600", "R050", "R100", "R200", "R400", "R500", "R600"],
+      "tags": ["OC QNX", "Runtime", "RegulBus", "Redundancy", "IEC 104 master", "IEC 104 slave", "Modbus_TCP master", "Modbus_TCP slave", "Modbus_RTU master", "Modbus_RTU slave", "Hart", "Regul HART Communication.", "OPCUA", "OPCDA", "AstraIDE Среда разработки", "Visualisation", "СПО модуля"]
+    },
+    {
+      "id": "regul_r500s",
+      "title": "Regul R500S",
+      "products": ["Regul R500S", "R500S"],
+      "tags": ["OC QNX", "SafetyRuntime", "RegulBus", "Redundancy", "IEC 104 master", "IEC 104 slave", "Modbus_TCP master", "Modbus_TCP slave", "Modbus_RTU master", "Modbus_RTU slave", "Hart", "OPCUA", "OPCDA", "AstraIDE Среда разработки", "СПО модуля", "HAM_SFC"]
+    },
+    {
+      "id": "astraregul_platform",
+      "title": "AstraRegul platform",
+      "products": ["AstraRegul", "AstraIDE", "Astra.IDE", "AstraServer", "Astudio", "AStudio"],
+      "tags": ["AstraServer", "Astudio", "HMI", "Security", "Alarms", "Trends", "AlphaReports", "PsTechEE", "PsTechOG", "PsTechMT", "PsTechSIS", "PsBase", "PsDiagn", "PsSis"]
+    }
+  ],
+  "aliases": {
+    "OC QNX": ["ОС QNX", "OC_QNX", "QNX"],
+    "IEC 104 master": ["IEC104 master", "IEC_104 master", "МЭК 104 master"],
+    "IEC 104 slave": ["IEC104 slave", "IEC_104 slave", "МЭК 104 slave"],
+    "Modbus_TCP master": ["Modbus TCP master", "Modbus-TCP master"],
+    "Modbus_TCP slave": ["Modbus TCP slave", "Modbus-TCP slave"],
+    "Modbus_RTU master": ["Modbus RTU master", "Modbus-RTU master"],
+    "Modbus_RTU slave": ["Modbus RTU slave", "Modbus-RTU slave"],
+    "Hart": ["HART"],
+    "Regul HART Communication.": ["Regul HART Communication", "HART Communication"],
+    "OPCUA": ["OPC UA", "OPC_UA", "OPC-UA"],
+    "OPCDA": ["OPC DA", "OPC_DA", "OPC-DA"],
+    "AstraIDE Среда разработки": ["AstraIDE", "Astra.IDE", "Astra IDE", "Среда разработки"],
+    "Visualisation": ["Visualization", "Визуализация"],
+    "СПО модуля": ["СПО", "прошивка", "firmware", "модуль СПО"],
+    "SafetyRuntime": ["Safety Runtime"],
+    "HAM_SFC": ["HAM SFC"],
+    "Astudio": ["AStudio"]
+  }
+}

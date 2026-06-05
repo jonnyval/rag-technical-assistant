@@ -50,7 +50,7 @@ storage:
   vector_db:
     # Активная база: qdrant_v2_docker | qdrant_v1 | qdrant_tickets_test
     active: "qdrant_v2_docker"
-    second_db: "qdrant_tickets_test" 
+    second_db: "qdrant_tickets_filtered"
     # Глобальные таймауты
     timeout_seconds: 10
     
@@ -92,6 +92,17 @@ storage:
           path: "vector_dbs/tickets_test/parents.db"
         
         description: "Для тестирования поиска по тикетам"
+
+      qdrant_tickets_filtered:
+        type: "qdrant"
+        url: "http://localhost:6333"
+        collection: "tickets_filtered_collection"
+
+        parent_store:
+          type: "sqlite"
+          path: "vector_dbs/tickets_filtered/parents.db"
+
+        description: "Очищенная отдельная база исторических тикетов"
 
 # === МОДЕЛИ (Эмбеддинги и реранкеры) ===
 models:
@@ -182,7 +193,7 @@ applications:
   # ===== Система обработки тикетов =====
   support_tickets:
     name: "Обработка технических тикетов"
-    llm: "ollama"                  # Провайдер для обогащения тикетов (ticket_active_llm)
+    llm: "ollama"                  # Режим обогащения тикетов: ollama | api
     embedding: "qwen3"
     vector_db: "qdrant_tickets_test"
     
@@ -194,6 +205,8 @@ applications:
       # Включить LLM-обогащение метаданных (symptoms/solution) для закрытых тикетов
       # ВНИМАНИЕ: при включении каждый закрытый тикет делает запрос к LLM — увеличивает время ингеста
       enable_smart_metadata: false
+      # Для llm: "api" ключи перебираются сначала по Gemini, затем по Groq.
+      api_provider_order: ["gemini", "groq"]
     
     description: "Система для анализа и индексирования технических обращений"
   

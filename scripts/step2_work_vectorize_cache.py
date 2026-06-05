@@ -1,75 +1,492 @@
-import sys
+import argparse
+import gc
 import json
+import os
+import pickle
+import re
+import shutil
+import sys
 from pathlib import Path
+from typing import Any, Iterable
+
+from langchain_classic.retrievers import ParentDocumentRetriever
+from langchain_classic.storage import EncoderBackedStore
+from langchain_community.storage import SQLStore
 from langchain_core.documents import Document
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_qdrant import FastEmbedSparse, QdrantVectorStore, RetrievalMode
+from langchain_text_splitters import MarkdownTextSplitter
+from qdrant_client import QdrantClient
+from qdrant_client.http import models
 from tqdm import tqdm
 
-# Определение корня проекта (на 2 уровня выше папки scripts)
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.append(str(PROJECT_ROOT))
 
-from src.config import settings
-from src.engine import RAGEngine
+from src.config import settings  # noqa: E402
 
-# Указываем абсолютный путь к папке с обработанными тикетами
-CACHE_DIR = PROJECT_ROOT / "data" / "llm_cache_tickets"
 
-def main():
-    """Загружает перенесенный LLM-кэш тикетов и добавляет документы в векторную базу."""
+DEFAULT_CACHE_DIR = PROJECT_ROOT / "data" / "llm_cache_tickets_filtered"
+RAW_CACHE_DIR = PROJECT_ROOT / "data" / "llm_cache_tickets"
+MONTHLY_CACHE_RE = re.compile(r"^llm_cache_tickets_\d{4}-\d{2}-\d{2}$")
+SPARSE_VECTOR_NAME = "langchain-sparse"
+PARENT_NAMESPACE = "reglab_parents"
+EMAIL_RE = re.compile(
+    r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\."
+    r"(?:ru|com|net|org|su|kz|by|info|biz|pro|рф)",
+    re.IGNORECASE,
+)
+EMAIL_LIKE_RE = re.compile(r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[^\s\\/]+")
+PHONE_RE = re.compile(r"(?<!\d)(?:\+?7|8)(?:[\s\-().]*\d){10}(?!\d)")
+FIO_RE = re.compile(
+    r"\b[\u0410-\u042f\u0401][\u0430-\u044f\u0451]+(?:-[\u0410-\u042f\u0401][\u0430-\u044f\u0451]+)?"
+    r"\s+[\u0410-\u042f\u0401][\u0430-\u044f\u0451]+"
+    r"\s+[\u0410-\u042f\u0401][\u0430-\u044f\u0451]+(?:\u0432\u0438\u0447|\u0432\u043d\u0430|\u0438\u0447|\u043d\u0430)?\b"
+)
+INITIALS_NAME_RE = re.compile(
+    r"\b[\u0410-\u042f\u0401][\u0430-\u044f\u0451]+(?:-[\u0410-\u042f\u0401][\u0430-\u044f\u0451]+)?"
+    r"\s+[A-Z\u0410-\u042f\u0401]\.\s*[A-Z\u0410-\u042f\u0401]\."
+)
+CONTACT_LINE_RE = re.compile(
+    r"(?im)^\s*(?:contact|contacts?|\u043a\u043e\u043d\u0442\u0430\u043a\u0442|"
+    r"\u0442\u0435\u043b\.?|\u0442\u0435\u043b\u0435\u0444\u043e\u043d|e-?mail|email)\s*[:;].*$"
+)
+SIGNATURE_BEFORE_CONTACT_RE = re.compile(
+    r"(?is)\u0441\s+\u0443\u0432\u0430\u0436\u0435\u043d\u0438\u0435\u043c,?.{0,300}?"
+    r"(?=(?:\u043c\u043e\u0431\.?|\u0442\u0435\u043b\.?|\u0442\u0435\u043b\u0435\u0444\u043e\u043d|"
+    r"e-?mail|email|web)\s*:)"
+)
+INLINE_NAME_FIELD_RE = re.compile(
+    r"(?i)(\b\u0438\u043c\u044f\s*:\s*)[^:\n]{2,120}?"
+    r"(?=(?:\u043a\u043e\u043c\u043f\u0430\u043d\u0438\u044f|\u0442\u0435\u043c\u0430|e-?mail|email|"
+    r"\u0442\u0435\u043b\u0435\u0444\u043e\u043d|\u0432\u043e\u043f\u0440\u043e\u0441)\s*:)"
+)
 
-    print("=== РАБОЧИЙ ПК: ВЕКТОРИЗАЦИЯ И ЗАГРУЗКА В БАЗУ ===")
-    
-    # КРИТИЧЕСКИ ВАЖНО: Выключаем LLM-обработку! 
-    # Данные уже обработаны на домашнем ПК, нам не нужна Ollama на работе.
-    # settings.enable_smart_metadata = False 
-    
-    print(f"Ищу кэш в папке: {CACHE_DIR.absolute()}")
-    
-    if not CACHE_DIR.exists():
-        print(f"❌ ОШИБКА: Папка не найдена!")
-        print("Убедитесь, что вы перенесли разархивированную папку с домашнего ПК.")
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Vectorize prebuilt ticket LLM cache into the configured ticket backend."
+    )
+    parser.add_argument(
+        "--cache-dir",
+        type=Path,
+        default=None,
+        help="Directory with cached ticket JSON files. Defaults to filtered cache if it exists.",
+    )
+    parser.add_argument(
+        "--db",
+        default=None,
+        help="Backend name from config.yaml. Defaults to storage.vector_db.second_db.",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=128,
+        help="How many parent documents to add per batch.",
+    )
+    parser.add_argument(
+        "--max-doc-chars",
+        type=int,
+        default=12000,
+        help="Trim very long parent docs before indexing. Use 0 to disable.",
+    )
+    parser.add_argument(
+        "--recreate",
+        action="store_true",
+        help="Delete the target Qdrant collection and SQLite parent store before indexing.",
+    )
+    parser.add_argument(
+        "--append",
+        action="store_true",
+        help="Append to a non-empty target. Without this or --recreate, non-empty targets abort.",
+    )
+    parser.add_argument(
+        "--allow-duplicates",
+        action="store_true",
+        help="With --append, do not skip cache files whose ticket_id is already present in Qdrant.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Read and validate the cache, but do not load embedding models or write to Qdrant.",
+    )
+    return parser.parse_args()
+
+
+def resolve_cache_dir(cache_dir: Path | None) -> Path:
+    if cache_dir is not None:
+        return cache_dir if cache_dir.is_absolute() else PROJECT_ROOT / cache_dir
+    monthly_cache_dirs = [
+        path for path in (PROJECT_ROOT / "data").iterdir()
+        if path.is_dir() and MONTHLY_CACHE_RE.match(path.name)
+    ]
+    if monthly_cache_dirs:
+        return max(monthly_cache_dirs, key=lambda path: path.stat().st_mtime)
+    if DEFAULT_CACHE_DIR.exists():
+        return DEFAULT_CACHE_DIR
+    return RAW_CACHE_DIR
+
+
+def resolve_project_path(path_value: str | os.PathLike[str]) -> Path:
+    path = Path(path_value)
+    return path if path.is_absolute() else PROJECT_ROOT / path
+
+
+def get_backend(name: str) -> dict[str, Any]:
+    backend = settings.db_backends.get(name)
+    if not backend:
+        available = ", ".join(settings.db_backends.keys())
+        raise SystemExit(f"Backend '{name}' not found in config.yaml. Available: {available}")
+    if backend.get("type") != "qdrant":
+        raise SystemExit(f"Backend '{name}' is not a qdrant backend.")
+    return backend
+
+
+def make_qdrant_client(backend: dict[str, Any]) -> QdrantClient:
+    if backend.get("url"):
+        return QdrantClient(url=backend["url"])
+    if backend.get("path"):
+        path = resolve_project_path(backend["path"])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return QdrantClient(path=str(path))
+    raise SystemExit("Qdrant backend must define either url or path.")
+
+
+def parent_store_path(backend: dict[str, Any]) -> Path:
+    parent_store = backend.get("parent_store", {})
+    if isinstance(parent_store, dict):
+        path_value = parent_store.get("path", "vector_dbs/parent_docstore.db")
+    else:
+        path_value = parent_store or "vector_dbs/parent_docstore.db"
+    return resolve_project_path(str(path_value))
+
+
+def recreate_storage(client: QdrantClient, collection_name: str, store_path: Path) -> None:
+    if client.collection_exists(collection_name):
+        client.delete_collection(collection_name)
+        print(f"Deleted Qdrant collection: {collection_name}")
+    if store_path.exists():
+        if store_path.is_dir():
+            shutil.rmtree(store_path)
+        else:
+            store_path.unlink()
+        print(f"Deleted parent store: {store_path}")
+
+
+def ensure_collection(
+    client: QdrantClient,
+    collection_name: str,
+    dense_embeddings: HuggingFaceEmbeddings,
+) -> None:
+    if client.collection_exists(collection_name):
         return
 
-    documents = []
-    cache_files = list(CACHE_DIR.rglob("*.json"))
-    print(f"Найдено файлов кэша: {len(cache_files)}")
-    
-    if len(cache_files) == 0:
-        print("❌ ОШИБКА: Папка существует, но JSON-файлов внутри нет.")
-        return
+    probe_vector = dense_embeddings.embed_query("dimension probe")
+    vector_size = len(probe_vector)
+    client.create_collection(
+        collection_name=collection_name,
+        vectors_config=models.VectorParams(
+            size=vector_size,
+            distance=models.Distance.COSINE,
+        ),
+        sparse_vectors_config={
+            SPARSE_VECTOR_NAME: models.SparseVectorParams(),
+        },
+        on_disk_payload=True,
+    )
+    print(f"Created Qdrant collection: {collection_name} (dense size={vector_size})")
 
-    print("\nЧтение файлов и применение предохранителей...")
-    for f in tqdm(cache_files, desc="Подготовка документов"):
+
+def collection_points_count(client: QdrantClient, collection_name: str) -> int:
+    if not client.collection_exists(collection_name):
+        return 0
+    info = client.get_collection(collection_name)
+    return int(info.points_count or 0)
+
+
+def build_retriever(
+    backend: dict[str, Any],
+    client: QdrantClient,
+    collection_name: str,
+    store_path: Path,
+    dense_embeddings: HuggingFaceEmbeddings,
+) -> ParentDocumentRetriever:
+    sparse_embeddings = FastEmbedSparse(model_name="Qdrant/bm25")
+    qdrant = QdrantVectorStore(
+        client=client,
+        collection_name=collection_name,
+        embedding=dense_embeddings,
+        sparse_embedding=sparse_embeddings,
+        retrieval_mode=RetrievalMode.HYBRID,
+    )
+
+    store_path.parent.mkdir(parents=True, exist_ok=True)
+    byte_store = SQLStore(
+        namespace=PARENT_NAMESPACE,
+        db_url=f"sqlite:///{store_path}",
+    )
+    byte_store.create_schema()
+
+    docstore = EncoderBackedStore(
+        store=byte_store,
+        key_encoder=lambda key: key,
+        value_serializer=pickle.dumps,
+        value_deserializer=pickle.loads,
+    )
+
+    child_splitter = MarkdownTextSplitter(
+        chunk_size=settings.child_chunk_size,
+        chunk_overlap=settings.child_chunk_overlap,
+    )
+    return ParentDocumentRetriever(
+        vectorstore=qdrant,
+        docstore=docstore,
+        child_splitter=child_splitter,
+        search_kwargs={"k": settings.top_k_retrieval},
+    )
+
+
+def trim_content(text: str, max_chars: int) -> str:
+    if max_chars <= 0 or len(text) <= max_chars:
+        return text
+    half = max_chars // 2
+    return (
+        text[:half].rstrip()
+        + "\n\n...[LONG TICKET TEXT TRIMMED FOR INDEXING]...\n\n"
+        + text[-half:].lstrip()
+    )
+
+
+def scrub_pii_text(text: str) -> str:
+    text = CONTACT_LINE_RE.sub("[CONTACT REMOVED]", text or "")
+    text = SIGNATURE_BEFORE_CONTACT_RE.sub("[SIGNATURE REMOVED]", text)
+    text = INLINE_NAME_FIELD_RE.sub(r"\1[PERSON]", text)
+    text = EMAIL_RE.sub("[EMAIL]", text)
+    text = EMAIL_LIKE_RE.sub("[EMAIL]", text)
+    text = PHONE_RE.sub("[PHONE]", text)
+    text = INITIALS_NAME_RE.sub("[PERSON]", text)
+    return FIO_RE.sub("[PERSON]", text)
+
+
+def scrub_pii_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return scrub_pii_text(value)
+    if isinstance(value, list):
+        return [scrub_pii_value(item) for item in value]
+    if isinstance(value, tuple):
+        return [scrub_pii_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: scrub_pii_value(item) for key, item in value.items()}
+    return value
+
+
+def scrub_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    scrubbed: dict[str, Any] = {}
+    for key, value in metadata.items():
+        if key in {"ticket_id", "ticket_url"}:
+            scrubbed[key] = value
+        else:
+            scrubbed[key] = scrub_pii_value(value)
+    return scrubbed
+
+
+def load_documents_from_file(path: Path, max_doc_chars: int) -> list[Document]:
+    with path.open("r", encoding="utf-8") as file:
+        raw_data = json.load(file)
+
+    if isinstance(raw_data, dict):
+        items = [raw_data]
+    elif isinstance(raw_data, list):
+        items = raw_data
+    else:
+        raise ValueError("expected JSON object or list")
+
+    docs: list[Document] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        content = item.get("page_content")
+        if not isinstance(content, str) or not content.strip():
+            continue
+        metadata = item.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+        metadata = scrub_metadata(dict(metadata))
+        metadata.setdefault("source_cache_file", path.name)
+        scrubbed_content = scrub_pii_text(content.strip())
+        docs.append(
+            Document(
+                page_content=trim_content(scrubbed_content, max_doc_chars),
+                metadata=metadata,
+            )
+        )
+    return docs
+
+
+def iter_cache_files(cache_dir: Path) -> list[Path]:
+    return sorted(
+        path for path in cache_dir.rglob("*.json")
+        if not path.name.startswith("_")
+    )
+
+
+def ticket_id_from_cache_file(path: Path) -> str:
+    match = re.search(r"(RL-\d+)", path.stem, re.IGNORECASE)
+    return match.group(1).upper() if match else path.stem.upper()
+
+
+def extract_ticket_id_from_payload(payload: dict[str, Any]) -> str | None:
+    metadata = payload.get("metadata")
+    if isinstance(metadata, dict) and metadata.get("ticket_id"):
+        return str(metadata["ticket_id"]).upper()
+    if payload.get("ticket_id"):
+        return str(payload["ticket_id"]).upper()
+    return None
+
+
+def existing_ticket_ids(client: QdrantClient, collection_name: str) -> set[str]:
+    if not client.collection_exists(collection_name):
+        return set()
+
+    ticket_ids: set[str] = set()
+    offset = None
+    while True:
+        points, offset = client.scroll(
+            collection_name=collection_name,
+            limit=1000,
+            offset=offset,
+            with_payload=True,
+            with_vectors=False,
+        )
+        for point in points:
+            payload = point.payload or {}
+            ticket_id = extract_ticket_id_from_payload(payload)
+            if ticket_id:
+                ticket_ids.add(ticket_id)
+        if offset is None:
+            break
+    return ticket_ids
+
+
+def filter_existing_cache_files(files: list[Path], known_ticket_ids: set[str]) -> tuple[list[Path], int]:
+    if not known_ticket_ids:
+        return files, 0
+    filtered = [path for path in files if ticket_id_from_cache_file(path) not in known_ticket_ids]
+    return filtered, len(files) - len(filtered)
+
+
+def chunks(items: list[Path], size: int) -> Iterable[list[Path]]:
+    for index in range(0, len(items), size):
+        yield items[index:index + size]
+
+
+def read_batch(files: list[Path], max_doc_chars: int) -> tuple[list[Document], int]:
+    docs: list[Document] = []
+    errors = 0
+    for path in files:
         try:
-            with open(f, "r", encoding="utf-8") as file:
-                data_list = json.load(file)
-                for item in data_list:
-                    content = item["page_content"]
-                    
-                    # ПРЕДОХРАНИТЕЛЬ: Обрезаем гигантские логи (защита от "монстра" на 47к символов)
-                    if len(content) > 6000:
-                        content = content[:3000] + "\n\n...[ДЛИННЫЕ ТЕКСТЫ ОБРЕЗАНЫ СИСТЕМОЙ ДЛЯ ОПТИМИЗАЦИИ ПОИСКА]...\n\n" + content[-3000:]
-                    
-                    doc = Document(
-                        page_content=content,
-                        metadata=item["metadata"]
-                    )
-                    documents.append(doc)
-        except Exception as e:
-            print(f"\nОшибка при чтении файла {f.name}: {e}")
-            
-    print(f"\nУспешно собрано {len(documents)} готовых чанков.")
-    
-    print("\nИнициализация RAGEngine (подключение к базам и загрузка модели Qwen3)...")
-    engine = RAGEngine()
-    
-    print("\n🚀 Начинаем векторизацию! Это может занять несколько минут...")
-    try:
-        # ПРАВИЛЬНЫЙ ВЫЗОВ ДЛЯ ВАШЕЙ АРХИТЕКТУРЫ
-        engine.retriever.parent_retriever.add_documents(documents)
-        print("\n✅ УСПЕХ! База обновлена. Векторы сохранены в Qdrant, полные тексты - в SQLite.")
-    except Exception as e:
-        print(f"\n❌ Ошибка при сохранении в базу: {e}")
+            docs.extend(load_documents_from_file(path, max_doc_chars))
+        except Exception as exc:
+            errors += 1
+            print(f"Skipping {path.name}: {exc}")
+    return docs, errors
+
+
+def main() -> None:
+    args = parse_args()
+    cache_dir = resolve_cache_dir(args.cache_dir).resolve()
+    backend_name = args.db or settings.second_db_name
+    backend = get_backend(backend_name)
+    collection_name = backend["collection"]
+    store_path = parent_store_path(backend)
+
+    if args.batch_size <= 0:
+        raise SystemExit("--batch-size must be greater than 0.")
+    if not cache_dir.exists():
+        raise SystemExit(f"Cache directory does not exist: {cache_dir}")
+
+    files = iter_cache_files(cache_dir)
+    if not files:
+        raise SystemExit(f"No JSON files found in: {cache_dir}")
+
+    print("=== Ticket Cache Vectorization ===")
+    print(f"Cache dir: {cache_dir}")
+    print(f"Backend: {backend_name}")
+    print(f"Collection: {collection_name}")
+    print(f"Parent store: {store_path}")
+    print(f"Files: {len(files)}")
+    print(f"Batch size: {args.batch_size}")
+
+    if args.dry_run:
+        total_docs = 0
+        total_errors = 0
+        for batch_files in tqdm(list(chunks(files, args.batch_size)), desc="Dry run"):
+            docs, errors = read_batch(batch_files, args.max_doc_chars)
+            total_docs += len(docs)
+            total_errors += errors
+        print(f"Dry run complete. Documents: {total_docs}, file errors: {total_errors}")
+        return
+
+    client = make_qdrant_client(backend)
+    if args.recreate:
+        recreate_storage(client, collection_name, store_path)
+    elif args.append and not args.allow_duplicates:
+        existing_ids = existing_ticket_ids(client, collection_name)
+        files, skipped_existing_tickets = filter_existing_cache_files(files, existing_ids)
+        print(f"Existing ticket_ids in Qdrant: {len(existing_ids)}")
+        print(f"Skipped cache files already indexed: {skipped_existing_tickets}")
+        print(f"Files left for append: {len(files)}")
+        if not files:
+            print("Nothing to append.")
+            return
+
+    dense_embeddings = HuggingFaceEmbeddings(
+        model_name=settings.embedding_model_name,
+        model_kwargs={"device": settings.device},
+        encode_kwargs={
+            "normalize_embeddings": True,
+            "prompt": "Instruct: Retrieve relevant technical support ticket to answer the query.\nQuery: ",
+        },
+    )
+
+    ensure_collection(client, collection_name, dense_embeddings)
+    existing_points = collection_points_count(client, collection_name)
+    if existing_points and not args.append and not args.recreate:
+        raise SystemExit(
+            f"Target collection already has {existing_points} points. "
+            "Use --recreate to rebuild or --append to add more."
+        )
+
+    retriever = build_retriever(
+        backend=backend,
+        client=client,
+        collection_name=collection_name,
+        store_path=store_path,
+        dense_embeddings=dense_embeddings,
+    )
+
+    total_docs = 0
+    total_errors = 0
+    batch_files_iter = list(chunks(files, args.batch_size))
+    for batch_files in tqdm(batch_files_iter, desc="Indexing batches"):
+        docs, errors = read_batch(batch_files, args.max_doc_chars)
+        total_errors += errors
+        if not docs:
+            continue
+        retriever.add_documents(docs)
+        total_docs += len(docs)
+        del docs
+        gc.collect()
+
+    final_points = collection_points_count(client, collection_name)
+    print("\nDone.")
+    print(f"Indexed parent documents: {total_docs}")
+    print(f"File errors: {total_errors}")
+    print(f"Qdrant points in collection: {final_points}")
+    print(f"Collection: {collection_name}")
+    print(f"Parent store: {store_path}")
+
 
 if __name__ == "__main__":
     main()

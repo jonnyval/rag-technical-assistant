@@ -315,6 +315,27 @@ class Settings:
         configs = llm_config.get("configs", {})
         return configs.get(self.ticket_active_llm, {}).get("model", "llama-3.1-8b-instant")
 
+    def ticket_provider_model_name(self, provider: str) -> str:
+        """Модель конкретного LLM-провайдера для ticket enrichment."""
+        llm_config = self._raw_config.get("providers", {}).get("llm", {})
+        configs = llm_config.get("configs", {})
+        defaults = {
+            "gemini": "gemini-2.5-flash",
+            "groq": "llama-3.1-8b-instant",
+            "ollama": "qwen3:8b",
+        }
+        return configs.get(provider, {}).get("model", defaults.get(provider, "unknown"))
+
+    @property
+    def ticket_api_provider_order(self) -> List[str]:
+        """Порядок облачных провайдеров для обработки тикетов."""
+        apps = self._raw_config.get("applications", {})
+        processing = apps.get("support_tickets", {}).get("processing", {})
+        order = processing.get("api_provider_order", ["gemini", "groq"])
+        if isinstance(order, str):
+            order = [item.strip() for item in order.split(",") if item.strip()]
+        return [str(item).lower() for item in order if str(item).strip()]
+
     @property
     def ticket_indexing_prefix(self) -> str:
         """Префикс для индексации тикетов"""
