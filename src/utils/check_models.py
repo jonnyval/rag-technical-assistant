@@ -37,17 +37,19 @@ def check_groq_models():
 
 
 def check_gemini_models():
-    """Проверяет доступность моделей Gemini через GOOGLE_API_KEY."""
+    """Проверяет доступность моделей Gemini через GOOGLE_API_KEYS."""
 
     print("=== Доступные модели GEMINI ===")
-    api_key = os.getenv("GOOGLE_API_KEY")
-    
-    if not api_key:
-        print("❌ Ключ GOOGLE_API_KEY не найден в .env\n")
+    keys_str = os.getenv("GOOGLE_API_KEYS", "")
+    keys = [k.strip() for k in keys_str.split(",") if k.strip()]
+
+    if not keys:
+        print("❌ Ключ GOOGLE_API_KEYS не найден в .env\n")
         return
 
+    api_key = keys[0]
     genai.configure(api_key=api_key)
-    
+
     try:
         for m in genai.list_models():
             if 'generateContent' in m.supported_generation_methods:

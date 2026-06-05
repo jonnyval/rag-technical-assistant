@@ -56,7 +56,6 @@ for _profile_name, _profile_overrides in getattr(settings, "_raw_config", {}).ge
         base_profile = RAG_PROFILES.get(_profile_name, RAG_PROFILES["deep"])
         RAG_PROFILES[_profile_name] = {**base_profile, **_profile_overrides}
 
-
 # ==========================================
 # 🧩 SGR СХЕМЫ (Schema-Guided Reasoning)
 # ==========================================
@@ -181,6 +180,20 @@ class SupportPrivateResponse(BaseModel):
 # ==========================================
 # 🛠 ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # ==========================================
+
+    @field_validator("related_topics", "recommended_questions", "internal_notes", mode="before")
+    @classmethod
+    def normalize_string_lists(cls, value):
+        """Allow LLMs to return list fields either as a list or as a single string."""
+        if value is None:
+            return []
+        if isinstance(value, str):
+            value = value.strip()
+            return [value] if value else []
+        if isinstance(value, list):
+            return [str(item) for item in value if item is not None and str(item).strip()]
+        return [str(value)]
+
 
 class KeyRotationCallbackHandler(BaseCallbackHandler):
     """Логирует ошибки LLM при ротации API ключей."""
@@ -611,6 +624,41 @@ class RAGEngine:
             log.debug("✓ SGR цепочка собрана")
 
             support_prompt_template = ChatPromptTemplate.from_template("""
+ВАЖНОЕ ПРАВИЛО КАЧЕСТВА ОТВЕТА:
+Ты готовишь приватную подсказку инженеру техподдержки, а не финальный ответ клиенту.
+Ответ должен помогать инженеру проверить гипотезу, а не звучать как уверенное решение без доказательств.
+
+Обязательный стиль draft_private_comment:
+- Пиши по-русски.
+- Разделяй подтвержденные факты и предположения.
+- Начинай с короткого вывода: что вероятнее всего и насколько это подтверждено.
+- Используй разделы:
+  **Что известно из обращения**
+  **Что подтверждено источниками**
+  **Наиболее вероятно**
+  **Проверить сначала**
+  **Гипотезы и ограничения**
+  **Что запросить у клиента**
+- В разделе "Что подтверждено источниками" указывай метки [D1], [D2], [T1] рядом с тезисами.
+- В разделе "Гипотезы и ограничения" явно пиши, если вывод основан на похожем тикете или косвенном совпадении, а не на документации.
+- Не утверждай существование конкретного поля интерфейса, параметра, чекбокса, вкладки, режима, команды или точного пути меню, если это не подтверждено найденным источником. Если это только предположение, пометь как "гипотеза".
+- Не добавляй универсальные советы ради объема. Лучше 3-5 проверок, но привязанных к источникам и тексту обращения.
+- Если источники слабо связаны с вопросом, прямо напиши, что прямого подтверждения нет, и снизь confidence до low или medium.
+- confidence = high только если есть прямое подтверждение в документации или тикете с тем же симптомом и решением.
+- confidence = medium если есть похожие случаи, но нет прямой инструкции.
+- confidence = low если есть только общие сведения или не хватает контекста.
+
+Правила для similar_tickets:
+- Добавляй тикет только если он реально помогает текущему обращению.
+- relevance_reason обязателен: укажи конкретное совпадение симптома, оборудования, версии, ошибки, лога или действия.
+- solution_summary должен описывать только то, что действительно есть в найденном тикете. Не превращай опыт прошлого кейса в официальную инструкцию.
+- Если похожие тикеты слабые, лучше верни similar_tickets = [].
+
+Правила для evidence_notes:
+- Каждая claim должна быть проверяемым тезисом.
+- source_ids должны ссылаться только на доступные D/T источники.
+- Если тезис является предположением, напиши это в comment.
+
 Ты помощник инженера технической поддержки РегЛаб.
 
 КРИТИЧЕСКИЕ ПРАВИЛА ЯЗЫКА:
@@ -757,6 +805,11 @@ class RAGEngine:
             response.ticket_sources = ticket_sources
             if not tickets:
                 response.similar_tickets = []
+            else:
+                response.similar_tickets = [
+                    ticket for ticket in response.similar_tickets
+                    if (ticket.relevance_reason or "").strip()
+                ]
 
             elapsed = time.perf_counter() - start
             log.info(

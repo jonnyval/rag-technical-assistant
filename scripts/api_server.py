@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import sys
 import time
 from contextlib import asynccontextmanager
@@ -28,13 +29,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.engine import RAGEngine  # noqa: E402
 from src.logger import log  # noqa: E402
+from faq_pipeline.search.ticket_vector_search import (  # noqa: E402
+    DEFAULT_INDEX_DIR,
+    TicketSearchConfig,
+    TicketVectorSearch,
+    preview as ticket_preview,
+)
 
 
 MODEL_ID = "reglab-ai"
 DEEP_MODEL_ID = "reglab-ai-deep"
+TICKET_SEARCH_MODEL_ID = "reglab-ticket-search"
+EVA_ARTICLE_MODEL_ID = "reglab-eva-article"
 MODEL_PROFILES = {
     MODEL_ID: "fast",
     DEEP_MODEL_ID: "deep",
+    EVA_ARTICLE_MODEL_ID: "deep",
 }
 API_VERSION = "1.1"
 DEFAULT_MAX_CONCURRENCY = 2
@@ -145,6 +155,8 @@ def _max_concurrency() -> int:
 async def lifespan(app: FastAPI):
     app.state.rag_engine = None
     app.state.rag_engines = {}
+    app.state.ticket_search = None
+    app.state.ticket_search_lock = asyncio.Lock()
     app.state.engine_locks = {
         profile: asyncio.Lock()
         for profile in set(MODEL_PROFILES.values())
@@ -165,6 +177,7 @@ async def lifespan(app: FastAPI):
 
     app.state.rag_engine = None
     app.state.rag_engines = {}
+    app.state.ticket_search = None
     log.info("RegLab RAG API stopped.")
 
 
@@ -209,6 +222,22 @@ async def _get_engine_for_model(request: Request, model_id: str) -> RAGEngine:
             if profile == "deep":
                 request.app.state.rag_engine = engine
         return engine
+
+
+async def _get_ticket_search(request: Request) -> TicketVectorSearch:
+    searcher = getattr(request.app.state, "ticket_search", None)
+    if searcher is not None:
+        return searcher
+
+    lock: asyncio.Lock = getattr(request.app.state, "ticket_search_lock")
+    async with lock:
+        searcher = getattr(request.app.state, "ticket_search", None)
+        if searcher is None:
+            log.info("Lazy initialization of ticket vector search index=%s", DEFAULT_INDEX_DIR)
+            searcher = TicketVectorSearch(DEFAULT_INDEX_DIR)
+            await run_in_threadpool(searcher.load)
+            request.app.state.ticket_search = searcher
+        return searcher
 
 
 def _build_ticket_query(text: str, equipment: Optional[List[str]] = None) -> str:
@@ -398,6 +427,20 @@ def _ticket_has_content(ticket: Any) -> bool:
     return bool(problem.strip() or solution.strip())
 
 
+def _format_similar_ticket(ticket: Any) -> str:
+    parts = [f"- **{getattr(ticket, 'ticket_id', '')}**"]
+    problem = (getattr(ticket, "problem_summary", "") or "").strip()
+    solution = (getattr(ticket, "solution_summary", "") or "").strip()
+    relevance = (getattr(ticket, "relevance_reason", "") or "").strip()
+    if problem:
+        parts.append(f": {problem}")
+    if relevance:
+        parts.append(f"\n  - Почему похоже: {relevance}")
+    if solution:
+        parts.append(f"\n  - Что было сделано: {solution}")
+    return "".join(parts)
+
+
 def _format_evidence(notes: List[Any]) -> str:
     if not notes:
         return ""
@@ -467,6 +510,384 @@ def _format_support_answer(result: Any) -> str:
         f"{_format_sources('Источники похожих обращений', getattr(result, 'ticket_sources', []))}"
         f"\n\n**Уверенность:** {result.confidence}"
     )
+
+
+def _format_support_answer(result: Any) -> str:
+    tickets = [
+        ticket for ticket in getattr(result, "similar_tickets", [])
+        if _ticket_has_content(ticket)
+    ]
+    tickets_block = ""
+    if tickets:
+        ticket_lines = "\n".join(_format_similar_ticket(ticket) for ticket in tickets)
+        tickets_block = f"\n\n---\n**Похожие обращения:**\n{ticket_lines}"
+
+    return (
+        f"{result.draft_private_comment}"
+        f"\n\n---\n**Информация из документации:**\n{result.docs_answer}"
+        f"{tickets_block}"
+        f"{_format_evidence(getattr(result, 'evidence_notes', []))}"
+        f"{_format_sources('Источники документации', getattr(result, 'doc_sources', []))}"
+        f"{_format_sources('Источники похожих обращений', getattr(result, 'ticket_sources', []))}"
+        f"\n\n**Уверенность:** {result.confidence}"
+    )
+
+
+def _format_ticket_search_answer(query: str, results: List[Dict[str, Any]]) -> str:
+    if not results:
+        return (
+            f"По запросу `{query}` похожие тикеты не найдены.\n\n"
+            "Попробуйте ввести точный код ошибки, фрагмент лога или формулировку симптома."
+        )
+
+    lines = [
+        f"Найдено похожих тикетов: {len(results)}",
+        f"Запрос: `{query}`",
+        "",
+    ]
+    for row in results:
+        exact = f" | exact: {', '.join(row['exact_matches'])}" if row.get("exact_matches") else ""
+        lines.extend(
+            [
+                f"## {row['rank']}. {row.get('ticket_id') or ''} - {row.get('title') or ''}",
+                f"Score: `{row.get('score')}` | word: `{row.get('word_score')}` | char: `{row.get('char_score')}`{exact}",
+            ]
+        )
+        if row.get("ticket_url"):
+            lines.append(f"URL: {row['ticket_url']}")
+        if row.get("category"):
+            lines.append(f"Категория: {row['category']}")
+        if row.get("equipment"):
+            lines.append(f"Оборудование: {row['equipment']}")
+
+        symptoms = ticket_preview(row.get("symptoms") or [], limit=3, max_len=520)
+        solutions = ticket_preview(row.get("solutions") or [], limit=4, max_len=700)
+        if symptoms:
+            lines.append(f"Симптомы: {symptoms}")
+        if solutions:
+            lines.append(f"Решение: {solutions}")
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
+async def _ticket_search_completion(request: Request, payload: ChatCompletionRequest, request_id: str, query: str) -> dict:
+    searcher = await _get_ticket_search(request)
+    config = TicketSearchConfig(top_k=10)
+    results = await run_in_threadpool(searcher.search, query, config)
+    created = int(time.time())
+    full_answer = _format_ticket_search_answer(query, results)
+    prompt_tokens = len(query.split())
+    completion_tokens = len(full_answer.split())
+
+    if payload.stream:
+        async def event_stream():
+            chunk = {
+                "id": f"chatcmpl-reglab-{request_id}",
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": payload.model,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"role": "assistant", "content": full_answer},
+                        "finish_reason": None,
+                    }
+                ],
+            }
+            final_chunk = {
+                "id": f"chatcmpl-reglab-{request_id}",
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": payload.model,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {},
+                        "finish_reason": "stop",
+                    }
+                ],
+            }
+            yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps(final_chunk, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+    return {
+        "id": f"chatcmpl-reglab-{request_id}",
+        "object": "chat.completion",
+        "created": created,
+        "model": payload.model,
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": full_answer},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+        },
+    }
+
+
+def _field_value(item: Any, *names: str) -> str:
+    for name in names:
+        if isinstance(item, dict):
+            value = item.get(name)
+        else:
+            value = getattr(item, name, None)
+        if value:
+            return str(value).strip()
+    return ""
+
+
+def _compact_text(value: Any, max_chars: int = 1800) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= max_chars:
+        return text
+    return f"{text[:max_chars].rstrip()}..."
+
+
+def _compact_block_text(value: Any, max_chars: int = 2600) -> str:
+    text = str(value or "").strip()
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = re.sub(r" (?=(-|\d+\.|Что известно|Что подтверждено|Наиболее вероятно|Проверить сначала|Гипотезы|Что запросить))", "\n", text)
+    if len(text) <= max_chars:
+        return text
+    return f"{text[:max_chars].rstrip()}..."
+
+
+def _normalize_eva_article_topic(query: str) -> str:
+    text = " ".join(str(query or "").split()).strip(" .")
+    patterns = [
+        r"^сгенерируй(?:те)?\s+(?:мне\s+)?(?:статью\s+)?(?:eva\s+)?(?:для\s+базы\s+знаний\s+)?(?:по|про|о)\s+",
+        r"^создай(?:те)?\s+(?:мне\s+)?(?:статью\s+)?(?:eva\s+)?(?:для\s+базы\s+знаний\s+)?(?:по|про|о)\s+",
+        r"^напиши(?:те)?\s+(?:мне\s+)?(?:статью\s+)?(?:eva\s+)?(?:для\s+базы\s+знаний\s+)?(?:по|про|о)\s+",
+        r"^подготовь(?:те)?\s+(?:мне\s+)?(?:статью\s+)?(?:eva\s+)?(?:для\s+базы\s+знаний\s+)?(?:по|про|о)\s+",
+        r"^сделай(?:те)?\s+(?:мне\s+)?(?:статью\s+)?(?:eva\s+)?(?:для\s+базы\s+знаний\s+)?(?:по|про|о)\s+",
+    ]
+    lowered = text.lower()
+    for pattern in patterns:
+        match = re.match(pattern, lowered, flags=re.IGNORECASE)
+        if match:
+            return text[match.end():].strip(" .")
+    return text
+
+
+def _looks_like_article_command(text: str) -> bool:
+    lowered = str(text or "").lower()
+    return any(marker in lowered for marker in ("сгенерируй", "создай", "напиши", "подготовь", "сделай")) and (
+        "стать" in lowered or "eva" in lowered
+    )
+
+
+def _collect_eva_tags(query: str, result: Any) -> List[str]:
+    text_parts = [
+        query,
+        getattr(result, "user_intent", ""),
+        getattr(result, "docs_answer", ""),
+        getattr(result, "draft_private_comment", ""),
+    ]
+    for ticket in getattr(result, "similar_tickets", []):
+        text_parts.extend(
+            [
+                _field_value(ticket, "problem_summary"),
+                _field_value(ticket, "solution_summary"),
+                _field_value(ticket, "source_file"),
+            ]
+        )
+    haystack = " ".join(text_parts).lower()
+
+    tag_rules = [
+        ("Astra.IDE", ["astra.ide", "astra ide", "astraide"]),
+        ("AstraRegul", ["astraregul"]),
+        ("R500S", ["r500s", "regul r500s"]),
+        ("R500", ["r500", "regul r500"]),
+        ("R050", ["r050", "regul r050"]),
+        ("СПО ПЛК", ["спо", "прошив", "firmware"]),
+        ("сертификаты", ["сертификат", "certificate"]),
+        ("CmpCodeMeter", ["cmpcodemeter", "codemeter"]),
+        ("HART", ["hart"]),
+        ("Modbus", ["modbus", "модбас"]),
+        ("OPC UA", ["opc ua", "opcua"]),
+        ("Safety", ["safety"]),
+        ("Linux", ["linux", "astra linux"]),
+        ("VMWare", ["vmware", "виртуальн"]),
+        ("лицензии", ["лиценз", "license"]),
+        ("связь", ["связ", "обмен", "опрос"]),
+    ]
+
+    tags = ["FAQ", "EVA", "техподдержка"]
+    for tag, markers in tag_rules:
+        if any(marker in haystack for marker in markers):
+            tags.append(tag)
+
+    for source in list(getattr(result, "doc_sources", [])) + list(getattr(result, "ticket_sources", [])):
+        for name in ("equipment_type", "library_name", "release_version"):
+            value = _field_value(source, name)
+            if value and len(value) <= 40:
+                tags.append(value)
+
+    unique_tags = []
+    seen = set()
+    for tag in tags:
+        normalized = tag.lower()
+        if normalized not in seen:
+            seen.add(normalized)
+            unique_tags.append(tag)
+    return unique_tags[:12]
+
+
+def _build_eva_title(topic: str, result: Any) -> str:
+    intent = _compact_text(getattr(result, "user_intent", ""), 140)
+    if _looks_like_article_command(intent):
+        intent = ""
+    base = intent if intent and intent.lower() not in {"unknown", "неизвестно"} else topic
+    base = base.splitlines()[0].strip(" .")
+    if not base:
+        return "Статья базы знаний по обращению"
+    lowered = base.lower()
+    if lowered.startswith(("ошибке ", "ошибка ", "проблеме ", "проблема ", "сообщении ", "сообщение ")):
+        return f"Что делать при {base[:125]}?"
+    if lowered.startswith("при "):
+        return f"Что делать {base[:128]}?"
+    if base.endswith("?"):
+        return base[:140]
+    if lowered.startswith(("как ", "что ", "почему ", "где ", "когда ")):
+        return f"{base[:139]}?"
+    return f"Что делать: {base[:125]}?"
+
+
+def _format_eva_sources(result: Any) -> str:
+    lines: List[str] = []
+    source_index = 1
+
+    for title, sources in (
+        ("Документация", getattr(result, "doc_sources", [])),
+        ("Похожие обращения", getattr(result, "ticket_sources", [])),
+    ):
+        for source in sources:
+            source_title = _field_value(source, "title", "page_title", "source_file") or "Источник"
+            source_file = _field_value(source, "source_file")
+            url = _field_value(source, "url")
+            details = [source_title]
+            if source_file and source_file != source_title:
+                details.append(source_file)
+            if url:
+                details.append(url)
+            lines.append(f"{source_index}. {title}: {' | '.join(details)}")
+            source_index += 1
+
+    if not lines:
+        return "Источники не найдены в RAG-результате."
+    return "\n".join(lines)
+
+
+def _format_eva_article(result: Any, query: str) -> str:
+    topic = _normalize_eva_article_topic(query)
+    tags = ", ".join(_collect_eva_tags(topic, result))
+    title = _build_eva_title(topic, result)
+    raw_problem = getattr(result, "user_intent", "") or topic
+    if _looks_like_article_command(raw_problem):
+        raw_problem = topic
+    problem = _compact_text(raw_problem, 1200)
+    docs_answer = _compact_block_text(getattr(result, "docs_answer", ""), 1200)
+    solution = _compact_block_text(getattr(result, "draft_private_comment", "") or docs_answer, 3200)
+    missing_context = _compact_text(getattr(result, "missing_context", ""), 700)
+    confidence = _compact_text(getattr(result, "confidence", ""), 300)
+
+    content_lines = []
+    if problem:
+        content_lines.append(problem)
+    if docs_answer and docs_answer != problem:
+        content_lines.append(docs_answer)
+    content = "\n\n".join(content_lines) or "Краткое содержание нужно уточнить по источникам."
+
+    comments = []
+    if missing_context and missing_context.lower() not in {"none", "нет", "не указано"}:
+        comments.append(f"Недостающий контекст: {missing_context}")
+    if confidence:
+        comments.append(f"Уверенность ответа: {confidence}")
+    comments.append("Перед публикацией проверьте актуальность версий ПО, ссылок и применимость решения к конкретной конфигурации.")
+
+    return (
+        "Формат написания статьи на портале EVA в базу знаний\n\n"
+        f"Теги:\n{tags}\n\n"
+        f"Название статьи:\n{title}\n\n"
+        f"Содержание статьи:\n{content}\n\n"
+        f"Описание проблемы:\n{problem or topic}\n\n"
+        f"Решение:\n{solution}\n\n"
+        f"Комментарии:\n" + "\n".join(f"- {item}" for item in comments) + "\n\n"
+        f"Источники:\n{_format_eva_sources(result)}"
+    )
+
+
+async def _chat_answer_completion(
+    payload: ChatCompletionRequest,
+    request_id: str,
+    query: str,
+    full_answer: str,
+) -> dict:
+    created = int(time.time())
+    prompt_tokens = len(query.split())
+    completion_tokens = len(full_answer.split())
+
+    if payload.stream:
+        async def event_stream():
+            chunk = {
+                "id": f"chatcmpl-reglab-{request_id}",
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": payload.model,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"role": "assistant", "content": full_answer},
+                        "finish_reason": None,
+                    }
+                ],
+            }
+            final_chunk = {
+                "id": f"chatcmpl-reglab-{request_id}",
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": payload.model,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {},
+                        "finish_reason": "stop",
+                    }
+                ],
+            }
+            yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps(final_chunk, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+    return {
+        "id": f"chatcmpl-reglab-{request_id}",
+        "object": "chat.completion",
+        "created": created,
+        "model": payload.model,
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": full_answer},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+        },
+    }
 
 
 def _safe_http_error(message: str, status_code: int, request_id: str) -> HTTPException:
@@ -561,6 +982,14 @@ async def list_models() -> dict:
             DEEP_MODEL_ID,
             "RegLab AI Deep: reranker enabled with moderate context for harder questions",
         ),
+        (
+            TICKET_SEARCH_MODEL_ID,
+            "RegLab Ticket Search: ranked lookup over filtered support tickets by error code or symptom",
+        ),
+        (
+            EVA_ARTICLE_MODEL_ID,
+            "RegLab EVA Article: knowledge-base article draft with tags and sources",
+        ),
     ]
     return {
         "object": "list",
@@ -582,7 +1011,6 @@ async def chat_completions(request: Request, payload: ChatCompletionRequest) -> 
     """OpenAI-compatible non-streaming chat completions endpoint."""
 
     request_id = _request_id()
-    engine = await _get_engine_for_model(request, payload.model)
 
     user_messages = [message for message in payload.messages if message.role == "user"]
     if not user_messages:
@@ -593,6 +1021,30 @@ async def chat_completions(request: Request, payload: ChatCompletionRequest) -> 
         raise _safe_http_error("User message is empty", status.HTTP_400_BAD_REQUEST, request_id)
 
     try:
+        if payload.model == TICKET_SEARCH_MODEL_ID:
+            log.info(
+                "Ticket-search request request_id=%s model=%s query=%r",
+                request_id,
+                payload.model,
+                query[:120],
+            )
+            async with request.app.state.inference_semaphore:
+                return await _ticket_search_completion(request, payload, request_id, query)
+
+        engine = await _get_engine_for_model(request, payload.model)
+        if payload.model == EVA_ARTICLE_MODEL_ID:
+            log.info(
+                "EVA article request request_id=%s model=%s profile=%s query=%r",
+                request_id,
+                payload.model,
+                _profile_from_model(payload.model),
+                query[:120],
+            )
+            async with request.app.state.inference_semaphore:
+                result = await run_in_threadpool(engine.process_support_ticket, query)
+            full_answer = _format_eva_article(result, query)
+            return await _chat_answer_completion(payload, request_id, query, full_answer)
+
         log.info(
             "OpenAI-compatible request request_id=%s model=%s profile=%s query=%r",
             request_id,
