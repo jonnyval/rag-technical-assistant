@@ -29,12 +29,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.engine import RAGEngine  # noqa: E402
 from src.logger import log  # noqa: E402
-from faq_pipeline.search.ticket_vector_search import (  # noqa: E402
-    DEFAULT_INDEX_DIR,
-    TicketSearchConfig,
-    TicketVectorSearch,
-    preview as ticket_preview,
-)
+try:
+    from faq_pipeline.search.ticket_vector_search import (  # noqa: E402
+        DEFAULT_INDEX_DIR,
+        TicketSearchConfig,
+        TicketVectorSearch,
+        preview as ticket_preview,
+    )
+except ImportError:
+    DEFAULT_INDEX_DIR = None
+    TicketSearchConfig = None
+    TicketVectorSearch = None
+
+    def ticket_preview(items: Any, *, limit: int = 3, max_len: int = 520) -> str:
+        values = [str(item).strip() for item in (items or []) if str(item).strip()]
+        return "; ".join(values[:limit])[:max_len]
 
 
 MODEL_ID = "reglab-ai"
@@ -224,7 +233,13 @@ async def _get_engine_for_model(request: Request, model_id: str) -> RAGEngine:
         return engine
 
 
-async def _get_ticket_search(request: Request) -> TicketVectorSearch:
+async def _get_ticket_search(request: Request) -> Any:
+    if TicketVectorSearch is None or DEFAULT_INDEX_DIR is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Ticket vector search is not available in this RAG deployment",
+        )
+
     searcher = getattr(request.app.state, "ticket_search", None)
     if searcher is not None:
         return searcher
@@ -571,6 +586,9 @@ def _format_ticket_search_answer(query: str, results: List[Dict[str, Any]]) -> s
 
 
 async def _ticket_search_completion(request: Request, payload: ChatCompletionRequest, request_id: str, query: str) -> dict:
+    if TicketSearchConfig is None:
+        raise _safe_http_error("Ticket vector search is not available", status.HTTP_503_SERVICE_UNAVAILABLE, request_id)
+
     searcher = await _get_ticket_search(request)
     config = TicketSearchConfig(top_k=10)
     results = await run_in_threadpool(searcher.search, query, config)
@@ -983,14 +1001,17 @@ async def list_models() -> dict:
             "RegLab AI Deep: reranker enabled with moderate context for harder questions",
         ),
         (
-            TICKET_SEARCH_MODEL_ID,
-            "RegLab Ticket Search: ranked lookup over filtered support tickets by error code or symptom",
-        ),
-        (
             EVA_ARTICLE_MODEL_ID,
             "RegLab EVA Article: knowledge-base article draft with tags and sources",
         ),
     ]
+    if TicketVectorSearch is not None:
+        models.append(
+            (
+                TICKET_SEARCH_MODEL_ID,
+                "RegLab Ticket Search: ranked lookup over filtered support tickets by error code or symptom",
+            )
+        )
     return {
         "object": "list",
         "data": [

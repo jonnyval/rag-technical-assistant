@@ -171,10 +171,11 @@ class DualRetriever(BaseRetriever):
         log.debug(f"  [{db_label}] извлечено {len(result)} документов (включая документы без родителей)")
         return result
 
-    def _rank_children(self, query: str, children: List[Document]) -> List[Document]:
+    def _rank_children(self, query: str, children: List[Document], *, limit: int | None = None) -> List[Document]:
         """Ранжирует дочерние чанки внутри одного источника, не смешивая документацию и тикеты."""
         if not children:
             return []
+        result_limit = limit or self.top_k_final
 
         if self.reranker_model is not None:
             with TimeProfiler(f"CrossEncoder Reranking ({len(children)} chunks)"):
@@ -189,11 +190,11 @@ class DualRetriever(BaseRetriever):
                         scored.append(doc)
 
                 scored.sort(key=lambda x: x.metadata["rerank_score"], reverse=True)
-                return scored[: self.top_k_final]
+                return scored[:result_limit]
 
         for doc in children:
             doc.metadata.setdefault("rerank_score", 0.0)
-        return children[: self.top_k_final]
+        return children[:result_limit]
 
     def retrieve_docs(self, query: str) -> List[Document]:
         """Ищет только по коллекции документации без фильтра по оборудованию."""
@@ -210,9 +211,15 @@ class DualRetriever(BaseRetriever):
         docs.sort(key=lambda x: x.metadata.get("rerank_score", 0), reverse=True)
         return docs
 
-    def retrieve_tickets(self, query: str) -> List[Document]:
+    def retrieve_tickets(
+        self,
+        query: str,
+        *,
+        final_limit: int | None = None,
+        child_k: int | None = None,
+    ) -> List[Document]:
         """Ищет только по коллекции обращений технической поддержки."""
-        k = self.tickets_retriever.search_kwargs.get("k", 30)
+        k = child_k or self.tickets_retriever.search_kwargs.get("k", 30)
         children = self._search_children(
             self.tickets_retriever,
             query,
@@ -220,10 +227,147 @@ class DualRetriever(BaseRetriever):
             apply_filter=False,
             db_label="tickets",
         )
-        top_children = self._rank_children(query, children)
+        top_children = self._rank_children(query, children, limit=final_limit)
         tickets = self._fetch_parents(self.tickets_retriever, top_children, "tickets")
         tickets.sort(key=lambda x: x.metadata.get("rerank_score", 0), reverse=True)
         return tickets
+
+    def retrieve_tickets_by_module_codes(self, module_codes: List[str], *, limit: int = 30) -> List[Document]:
+        """Достаёт обращения с точным совпадением module_code из payload metadata."""
+        codes = [str(code).strip() for code in module_codes if str(code).strip()]
+        if not codes:
+            return []
+
+        vectorstore = self.tickets_retriever.vectorstore
+        client = vectorstore.client
+        collection_name = vectorstore.collection_name
+        points, _ = client.scroll(
+            collection_name=collection_name,
+            scroll_filter=qdrant_models.Filter(
+                must=[
+                    qdrant_models.FieldCondition(
+                        key="metadata.mentioned_module_codes",
+                        match=qdrant_models.MatchAny(any=codes),
+                    )
+                ]
+            ),
+            limit=limit,
+            with_payload=True,
+            with_vectors=False,
+        )
+
+        child_docs: List[Document] = []
+        for point in points:
+            payload = point.payload or {}
+            metadata = dict(payload.get("metadata") or {})
+            metadata["db_source"] = "tickets"
+            metadata.setdefault("rerank_score", 0.0)
+            child_docs.append(Document(
+                page_content=str(payload.get("page_content") or ""),
+                metadata=metadata,
+            ))
+
+        if not child_docs:
+            return []
+
+        parent_ids: List[str] = []
+        seen_parent_ids = set()
+        direct_docs: List[Document] = []
+        for doc in child_docs:
+            parent_id = doc.metadata.get("doc_id")
+            if parent_id and parent_id not in seen_parent_ids:
+                seen_parent_ids.add(parent_id)
+                parent_ids.append(parent_id)
+            elif not parent_id:
+                direct_docs.append(doc)
+
+        result: List[Document] = []
+        if parent_ids:
+            parents = self.tickets_retriever.docstore.mget(parent_ids)
+            for parent in parents:
+                if not parent:
+                    continue
+                parent.metadata["db_source"] = "tickets"
+                parent.metadata.setdefault("rerank_score", 0.0)
+                result.append(parent)
+        result.extend(direct_docs)
+
+        deduped: List[Document] = []
+        seen_tickets = set()
+        for doc in result:
+            ticket_id = doc.metadata.get("ticket_id") or doc.metadata.get("source_file") or id(doc)
+            if ticket_id in seen_tickets:
+                continue
+            seen_tickets.add(ticket_id)
+            deduped.append(doc)
+        return deduped
+
+    def retrieve_docs_by_page_titles(self, page_titles: List[str], *, limit: int = 20) -> List[Document]:
+        """Достаёт документы по точному metadata.page_title из документационной коллекции."""
+        titles = [str(title).strip() for title in page_titles if str(title).strip()]
+        if not titles:
+            return []
+
+        vectorstore = self.docs_retriever.vectorstore
+        client = vectorstore.client
+        collection_name = vectorstore.collection_name
+        points, _ = client.scroll(
+            collection_name=collection_name,
+            scroll_filter=qdrant_models.Filter(
+                must=[
+                    qdrant_models.FieldCondition(
+                        key="metadata.page_title",
+                        match=qdrant_models.MatchAny(any=titles),
+                    )
+                ]
+            ),
+            limit=limit,
+            with_payload=True,
+            with_vectors=False,
+        )
+
+        parent_ids: List[str] = []
+        seen_parent_ids = set()
+        direct_docs: List[Document] = []
+        for point in points:
+            payload = point.payload or {}
+            metadata = dict(payload.get("metadata") or {})
+            metadata["db_source"] = "docs"
+            metadata.setdefault("rerank_score", 1.0)
+            parent_id = metadata.get("doc_id")
+            if parent_id and parent_id not in seen_parent_ids:
+                seen_parent_ids.add(parent_id)
+                parent_ids.append(parent_id)
+            elif not parent_id:
+                direct_docs.append(Document(
+                    page_content=str(payload.get("page_content") or ""),
+                    metadata=metadata,
+                ))
+
+        result: List[Document] = []
+        if parent_ids:
+            parents = self.docs_retriever.docstore.mget(parent_ids)
+            for parent in parents:
+                if not parent:
+                    continue
+                parent.metadata["db_source"] = "docs"
+                parent.metadata.setdefault("rerank_score", 1.0)
+                result.append(parent)
+        result.extend(direct_docs)
+
+        deduped: List[Document] = []
+        seen_docs = set()
+        for doc in result:
+            key = (
+                doc.metadata.get("source_file"),
+                doc.metadata.get("page_title"),
+                doc.metadata.get("breadcrumb_raw"),
+            )
+            if key in seen_docs:
+                continue
+            seen_docs.add(key)
+            deduped.append(doc)
+        return deduped
 
     # ------------------------------------------------------------------
     # Основной метод

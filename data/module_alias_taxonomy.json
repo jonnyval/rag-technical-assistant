@@ -1,0 +1,2554 @@
+{
+  "version": 1,
+  "source": "module_documentation",
+  "entities": [
+    {
+      "canonical": "R500 CU 00 021",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "CU 00 021",
+      "article_numbers": [
+        "R500 CU 00 021",
+        "R500 CU 00 021(W)"
+      ],
+      "function": "central_processing_unit",
+      "russian_name": "центральный процессор",
+      "aliases": [
+        "R500 CU 00 021",
+        "CU 00 021",
+        "CU00 021",
+        "CU-00-021",
+        "CU_00_021",
+        "CU 00 021W",
+        "CU 00 021(W)",
+        "R500 CU 00 021(W)",
+        "модуль CU 00 021",
+        "контроллер R500 CU 00 021",
+        "модуль R500 CU 00 021",
+        "контроллер Cu 00 021",
+        "CPU R500 CU 00 021",
+        "ЦП R500 CU 00 021",
+        "модуль CPU R500 CU 00 021",
+        "процессор CU 00 021",
+        "контроллер CU 00 021W",
+        "модуль ЦП R500 CU 00 021",
+        "ЦП CU 00 021",
+        "процессор R500 CU 00021",
+        "контроллер R500 CU 00 021(W)",
+        "модуль R500 CU 00 021(W)"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модули центрального процессора: добавлены модули R500 CU 00 021",
+        "R500 CU 00 021(W) Модуль центрального процессора"
+      ]
+    },
+    {
+      "canonical": "R500 CU 00 031",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "CU 00 031",
+      "article_numbers": [
+        "R500 CU 00 031",
+        "R500 CU 00 031(W)"
+      ],
+      "function": "central_processing_unit",
+      "russian_name": "центральный процессор",
+      "aliases": [
+        "R500 CU 00 031",
+        "CU 00 031",
+        "CU00 031",
+        "CU-00-031",
+        "CU_00_031",
+        "CU 00 031W",
+        "CU 00 031(W)",
+        "R500 CU 00 031(W)",
+        "ЦП CU 00 031",
+        "контроллер R500 CU 00 031"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модули центрального процессора: добавлены модули R500 CU 00 031",
+        "R500 CU 00 031(W) Модуль центрального процессора"
+      ]
+    },
+    {
+      "canonical": "R500 CU 00 051",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "CU 00 051",
+      "article_numbers": [
+        "R500 CU 00 051",
+        "R500 CU 00 051(W)"
+      ],
+      "function": "central_processing_unit",
+      "russian_name": "центральный процессор",
+      "aliases": [
+        "R500 CU 00 051",
+        "CU 00 051",
+        "CU00 051",
+        "CU-00-051",
+        "CU_00_051",
+        "CU 00 051W",
+        "CU 00 051(W)",
+        "R500 CU 00 051(W)",
+        "контроллер CU 00051",
+        "модуль R500 CU 00 051",
+        "модуль CU 00 051",
+        "контроллер R500 CU 00 051",
+        "CPU R500 CU 00 051",
+        "ЦП CU 00 051",
+        "процессор R500 CU 00 051",
+        "CPU CU 00 051",
+        "контроллер R500 CU 00 051(W)",
+        "модуль ЦП R500 CU 00 051",
+        "ЦП R500 CU 00 051",
+        "ЦП R500 CU 00 051(W)",
+        "модуль ЦП CU 00 051"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 CU 00 051 Модуль центрального процессора",
+        "R500 CU 00 051(W) Модуль центрального процессора"
+      ]
+    },
+    {
+      "canonical": "R500 CU 00 061",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "CU 00 061",
+      "article_numbers": [
+        "R500 CU 00 061",
+        "R500 CU 00 061(W)"
+      ],
+      "function": "central_processing_unit",
+      "russian_name": "центральный процессор",
+      "aliases": [
+        "R500 CU 00 061",
+        "CU 00 061",
+        "CU00 061",
+        "CU-00-061",
+        "CU_00_061",
+        "CU 00 061W",
+        "CU 00 061(W)",
+        "R500 CU 00 061(W)",
+        "модуль CU 00 061",
+        "модуль R500 CU 00 061",
+        "контроллер R500 CU 00 061",
+        "модуль R500 CU 00 061(W)",
+        "процессор CU 00 061"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 CU 00 061 Модуль центрального процессора",
+        "R500 CU 00 061(W) Модуль центрального процессора"
+      ]
+    },
+    {
+      "canonical": "R500 CU 00 071",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "CU 00 071",
+      "article_numbers": [
+        "R500 CU 00 071",
+        "R500 CU 00 071(W)"
+      ],
+      "function": "central_processing_unit",
+      "russian_name": "центральный процессор",
+      "aliases": [
+        "R500 CU 00 071",
+        "CU 00 071",
+        "CU00 071",
+        "CU-00-071",
+        "CU_00_071",
+        "CU 00 071W",
+        "CU 00 071(W)",
+        "R500 CU 00 071(W)",
+        "модуль R500 CU 00 071",
+        "ЦП R500 CU 00 071",
+        "процессор R500 CU 00 071",
+        "контроллер R500-CU-00-071",
+        "контроллер CU 00 071",
+        "CPU R500 CU 00 071"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 CU 00 071 Модуль центрального процессора",
+        "R500 CU 00 071(W) Модуль центрального процессора"
+      ]
+    },
+    {
+      "canonical": "R500 CU 00 052",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "CU 00 052",
+      "article_numbers": [
+        "R500 CU 00 052"
+      ],
+      "function": "central_processing_unit",
+      "russian_name": "центральный процессор",
+      "aliases": [
+        "R500 CU 00 052",
+        "CU 00 052",
+        "CU00 052",
+        "CU-00-052",
+        "CU_00_052",
+        "CPU R500 CU 00 052",
+        "ЦП R500 CU 00 052",
+        "модуль R500 CU 00 052",
+        "контроллер R500 CU 00 052",
+        "модуль CU 00 052"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 CU 00 052 Модуль центрального процессора"
+      ]
+    },
+    {
+      "canonical": "R500 CU 00 062",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "CU 00 062",
+      "article_numbers": [
+        "R500 CU 00 062"
+      ],
+      "function": "central_processing_unit",
+      "russian_name": "центральный процессор",
+      "aliases": [
+        "R500 CU 00 062",
+        "CU 00 062",
+        "CU00 062",
+        "CU-00-062",
+        "CU_00_062"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 CU 00 062 Модуль центрального процессора"
+      ]
+    },
+    {
+      "canonical": "R500 CU 00 072",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "CU 00 072",
+      "article_numbers": [
+        "R500 CU 00 072"
+      ],
+      "function": "central_processing_unit",
+      "russian_name": "центральный процессор",
+      "aliases": [
+        "R500 CU 00 072",
+        "CU 00 072",
+        "CU00 072",
+        "CU-00-072",
+        "CU_00_072",
+        "ЦП R500 CU 00 072"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 CU 00 072 Модуль центрального процессора"
+      ]
+    },
+    {
+      "canonical": "R500 CU 00 082",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "CU 00 082",
+      "article_numbers": [
+        "R500 CU 00 082"
+      ],
+      "function": "central_processing_unit",
+      "russian_name": "центральный процессор",
+      "aliases": [
+        "R500 CU 00 082",
+        "CU 00 082",
+        "CU00 082",
+        "CU-00-082",
+        "CU_00_082"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 CU 00 082 Модуль центрального процессора"
+      ]
+    },
+    {
+      "canonical": "R500 CU 00 151",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "CU 00 151",
+      "article_numbers": [
+        "R500 CU 00 151",
+        "R500 CU 00 151(W)"
+      ],
+      "function": "central_processing_unit",
+      "russian_name": "центральный процессор",
+      "aliases": [
+        "R500 CU 00 151",
+        "CU 00 151",
+        "CU00 151",
+        "CU-00-151",
+        "CU_00_151",
+        "CU 00 151W",
+        "CU 00 151(W)",
+        "R500 CU 00 151(W)",
+        "контроллер R500 CU 00 151",
+        "модуль CU 00 151",
+        "контроллер R500 CU 00 151(W)",
+        "ЦП R500 CU 00 151",
+        "ЦП R500 CU 00 151(W)",
+        "модуль R500 CU 00 151"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 CU 00 151 Модуль центрального процессора",
+        "R500 CU 00 151(W) Модуль центрального процессора"
+      ]
+    },
+    {
+      "canonical": "R500 CU 00 161",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "CU 00 161",
+      "article_numbers": [
+        "R500 CU 00 161",
+        "R500 CU 00 161(W)"
+      ],
+      "function": "central_processing_unit",
+      "russian_name": "центральный процессор",
+      "aliases": [
+        "R500 CU 00 161",
+        "CU 00 161",
+        "CU00 161",
+        "CU-00-161",
+        "CU_00_161",
+        "CU 00 161W",
+        "CU 00 161(W)",
+        "R500 CU 00 161(W)",
+        "ЦП CU00161"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 CU 00 161 Модуль центрального процессора",
+        "R500 CU 00 161(W) Модуль центрального процессора"
+      ]
+    },
+    {
+      "canonical": "R500 CU 00 171",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "CU 00 171",
+      "article_numbers": [
+        "R500 CU 00 171",
+        "R500 CU 00 171(W)"
+      ],
+      "function": "central_processing_unit",
+      "russian_name": "центральный процессор",
+      "aliases": [
+        "R500 CU 00 171",
+        "CU 00 171",
+        "CU00 171",
+        "CU-00-171",
+        "CU_00_171",
+        "CU 00 171W",
+        "CU 00 171(W)",
+        "R500 CU 00 171(W)",
+        "модуль R500 CU 00 171"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 CU 00 171 Модуль центрального процессора",
+        "R500 CU 00 171(W) Модуль центрального процессора"
+      ]
+    },
+    {
+      "canonical": "R500 CU 00 181",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "CU 00 181",
+      "article_numbers": [
+        "R500 CU 00 181",
+        "R500 CU 00 181(W)"
+      ],
+      "function": "central_processing_unit",
+      "russian_name": "центральный процессор",
+      "aliases": [
+        "R500 CU 00 181",
+        "CU 00 181",
+        "CU00 181",
+        "CU-00-181",
+        "CU_00_181",
+        "CU 00 181W",
+        "CU 00 181(W)",
+        "R500 CU 00 181(W)",
+        "процессор R500 CU 00 181"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 CU 00 181 Модуль центрального процессора",
+        "R500 CU 00 181(W) Модуль центрального процессора"
+      ]
+    },
+    {
+      "canonical": "R500S CU 00 821",
+      "entity_type": "module",
+      "product_family": "Regul R500S",
+      "module_code": "CU 00 821",
+      "article_numbers": [
+        "R500S CU 00 821"
+      ],
+      "function": "central_processing_unit",
+      "russian_name": "центральный процессор",
+      "aliases": [
+        "R500S CU 00 821",
+        "CU 00 821",
+        "CU00 821",
+        "CU-00-821",
+        "CU_00_821",
+        "центральный процессор R500S",
+        "модуль ЦП R500S",
+        "CPU R500S",
+        "процессор CU 00 821",
+        "контроллер R500S CU 00 821",
+        "модуль R500S CU 00 821"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500S CU 00 821 Модуль центрального процессора"
+      ]
+    },
+    {
+      "canonical": "R500S CU 00 831",
+      "entity_type": "module",
+      "product_family": "Regul R500S",
+      "module_code": "CU 00 831",
+      "article_numbers": [
+        "R500S CU 00 831"
+      ],
+      "function": "central_processing_unit",
+      "russian_name": "центральный процессор",
+      "aliases": [
+        "R500S CU 00 831",
+        "CU 00 831",
+        "CU00 831",
+        "CU-00-831",
+        "CU_00_831",
+        "контроллер CU 00 831"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500S CU 00 831 Модуль центрального процессора"
+      ]
+    },
+    {
+      "canonical": "R500S CU 00 851",
+      "entity_type": "module",
+      "product_family": "Regul R500S",
+      "module_code": "CU 00 851",
+      "article_numbers": [
+        "R500S CU 00 851"
+      ],
+      "function": "central_processing_unit",
+      "russian_name": "центральный процессор",
+      "aliases": [
+        "R500S CU 00 851",
+        "CU 00 851",
+        "CU00 851",
+        "CU-00-851",
+        "CU_00_851",
+        "модуль R500S CU 00 851",
+        "CPU CU 00 851",
+        "CPU R500S CU 00 851",
+        "контроллер CU 00 851",
+        "контроллер R500S CU 00 851"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500S CU 00 851 Модуль центрального процессора"
+      ]
+    },
+    {
+      "canonical": "R500S CU 00 852",
+      "entity_type": "module",
+      "product_family": "Regul R500S",
+      "module_code": "CU 00 852",
+      "article_numbers": [
+        "R500S CU 00 852"
+      ],
+      "function": "central_processing_unit",
+      "russian_name": "центральный процессор",
+      "aliases": [
+        "R500S CU 00 852",
+        "CU 00 852",
+        "CU00 852",
+        "CU-00-852",
+        "CU_00_852",
+        "контроллер R500S CU 00 852",
+        "модуль R500S CU 00 852",
+        "процессор CU 00 852",
+        "контроллер CU 00 852"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500S CU 00 852 Модуль центрального процессора"
+      ]
+    },
+    {
+      "canonical": "R500 AI 16 011",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "AI 16 011",
+      "article_numbers": [
+        "R500 AI 16 011"
+      ],
+      "function": "analog_input",
+      "russian_name": "модуль аналогового ввода",
+      "aliases": [
+        "R500 AI 16 011",
+        "AI 16 011",
+        "AI16 011",
+        "AI-16-011",
+        "AI_16_011",
+        "аналоговый ввод R500",
+        "модуль AI R500",
+        "модуль AI 16-011",
+        "модуль R500 AI 16 011"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 AI 16 011 Модуль аналогового ввода"
+      ]
+    },
+    {
+      "canonical": "R500 AI 16 012",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "AI 16 012",
+      "article_numbers": [
+        "R500 AI 16 012"
+      ],
+      "function": "analog_input",
+      "russian_name": "модуль аналогового ввода",
+      "aliases": [
+        "R500 AI 16 012",
+        "AI 16 012",
+        "AI16 012",
+        "AI-16-012",
+        "AI_16_012",
+        "модуль AI 16 012",
+        "модуль R500 AI 16 012"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модули аналогового ввода: добавлен модуль R500 AI 16 012"
+      ]
+    },
+    {
+      "canonical": "R500 AI 08 022",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "AI 08 022",
+      "article_numbers": [
+        "R500 AI 08 022"
+      ],
+      "function": "analog_input",
+      "russian_name": "модуль аналогового ввода",
+      "aliases": [
+        "R500 AI 08 022",
+        "AI 08 022",
+        "AI08 022",
+        "AI-08-022",
+        "AI_08_022",
+        "модуль AI 08 022",
+        "модуль R500 AI 08 022"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 AI 08 022 Модуль аналогового ввода"
+      ]
+    },
+    {
+      "canonical": "R500 AI 08 023",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "AI 08 023",
+      "article_numbers": [
+        "R500 AI 08 023"
+      ],
+      "function": "analog_input",
+      "russian_name": "модуль аналогового ввода",
+      "aliases": [
+        "R500 AI 08 023",
+        "AI 08 023",
+        "AI08 023",
+        "AI-08-023",
+        "AI_08_023"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модули аналогового ввода: добавлены модуль R500 AI 08 023"
+      ]
+    },
+    {
+      "canonical": "R500 AI 08 031",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "AI 08 031",
+      "article_numbers": [
+        "R500 AI 08 031"
+      ],
+      "function": "analog_input",
+      "russian_name": "модуль аналогового ввода",
+      "aliases": [
+        "R500 AI 08 031",
+        "AI 08 031",
+        "AI08 031",
+        "AI-08-031",
+        "AI_08_031",
+        "модуль AI 08 031",
+        "модуль R500 AI 08 031"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модуль R500 А1 08 031: дополнено описание",
+        "R500 ΑΙ 08 031 Модуль аналогового ввода"
+      ]
+    },
+    {
+      "canonical": "R500 AI 08 131",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "AI 08 131",
+      "article_numbers": [
+        "R500 AI 08 131"
+      ],
+      "function": "analog_input",
+      "russian_name": "модуль аналогового ввода",
+      "aliases": [
+        "R500 AI 08 131",
+        "AI 08 131",
+        "AI08 131",
+        "AI-08-131",
+        "AI_08_131",
+        "модуль AI-08-131"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модули аналогового ввода: добавлен модуль R500 AI 08 131"
+      ]
+    },
+    {
+      "canonical": "R500 AI 08 041",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "AI 08 041",
+      "article_numbers": [
+        "R500 AI 08 041"
+      ],
+      "function": "analog_input",
+      "russian_name": "модуль аналогового ввода",
+      "aliases": [
+        "R500 AI 08 041",
+        "AI 08 041",
+        "AI08 041",
+        "AI-08-041",
+        "AI_08_041",
+        "модуль AI-08-041",
+        "модуль R500 AI 08 041"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 AI 08 041 Модуль аналогового ввода"
+      ]
+    },
+    {
+      "canonical": "R500 AI 08 042",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "AI 08 042",
+      "article_numbers": [
+        "R500 AI 08 042"
+      ],
+      "function": "analog_input",
+      "russian_name": "модуль аналогового ввода",
+      "aliases": [
+        "R500 AI 08 042",
+        "AI 08 042",
+        "AI08 042",
+        "AI-08-042",
+        "AI_08_042",
+        "модуль AI 08 042",
+        "модуль R500 AI 08 042"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 AI 08 042 Модуль аналогового ввода"
+      ]
+    },
+    {
+      "canonical": "R500 AI 08 142",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "AI 08 142",
+      "article_numbers": [
+        "R500 AI 08 142"
+      ],
+      "function": "analog_input",
+      "russian_name": "модуль аналогового ввода",
+      "aliases": [
+        "R500 AI 08 142",
+        "AI 08 142",
+        "AI08 142",
+        "AI-08-142",
+        "AI_08_142",
+        "модуль AI 08 142"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 REGLAB Al 08 142"
+      ]
+    },
+    {
+      "canonical": "R500 AI 08 242",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "AI 08 242",
+      "article_numbers": [
+        "R500 AI 08 242"
+      ],
+      "function": "analog_input",
+      "russian_name": "модуль аналогового ввода",
+      "aliases": [
+        "R500 AI 08 242",
+        "AI 08 242",
+        "AI08 242",
+        "AI-08-242",
+        "AI_08_242",
+        "модуль AI 08 242",
+        "модуль R500 AI 08 242"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модули аналогового ввода: добавлен модуль R500 AI 08 242"
+      ]
+    },
+    {
+      "canonical": "R500 AI 08 342",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "AI 08 342",
+      "article_numbers": [
+        "R500 AI 08 342"
+      ],
+      "function": "analog_input",
+      "russian_name": "модуль аналогового ввода",
+      "aliases": [
+        "R500 AI 08 342",
+        "AI 08 342",
+        "AI08 342",
+        "AI-08-342",
+        "AI_08_342"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модули центрального процессора: добавлены модули R500 CU 00 151... Модули аналогового ввода: добавлен модуль R500 AI 08 342"
+      ]
+    },
+    {
+      "canonical": "R500 AI 08 051",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "AI 08 051",
+      "article_numbers": [
+        "R500 AI 08 051"
+      ],
+      "function": "analog_input",
+      "russian_name": "модуль аналогового ввода",
+      "aliases": [
+        "R500 AI 08 051",
+        "AI 08 051",
+        "AI08 051",
+        "AI-08-051",
+        "AI_08_051",
+        "модуль AI 08051",
+        "модуль R500 AI 08 051",
+        "аналоговый модуль AI 08 051",
+        "шасси, AI 08 051"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модули аналогового ввода: восстановлено описание модуля R500 AI 08 051"
+      ]
+    },
+    {
+      "canonical": "R500 AI 08 052",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "AI 08 052",
+      "article_numbers": [
+        "R500 AI 08 052"
+      ],
+      "function": "analog_input",
+      "russian_name": "модуль аналогового ввода",
+      "aliases": [
+        "R500 AI 08 052",
+        "AI 08 052",
+        "AI08 052",
+        "AI-08-052",
+        "AI_08_052",
+        "модуль AI 08 052",
+        "модуль R500 AI 08 052"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модули аналогового ввода: модернизирован модуль R500 AI 08 051 -> R500 AI 08 052"
+      ]
+    },
+    {
+      "canonical": "R500 AI 08 053",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "AI 08 053",
+      "article_numbers": [
+        "R500 AI 08 053"
+      ],
+      "function": "analog_input",
+      "russian_name": "модуль аналогового ввода",
+      "aliases": [
+        "R500 AI 08 053",
+        "AI 08 053",
+        "AI08 053",
+        "AI-08-053",
+        "AI_08_053"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модули аналогового ввода: добавлен модуль R500 AI 08 053"
+      ]
+    },
+    {
+      "canonical": "R500 AI 08 061",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "AI 08 061",
+      "article_numbers": [
+        "R500 AI 08 061"
+      ],
+      "function": "analog_input",
+      "russian_name": "модуль аналогового ввода",
+      "aliases": [
+        "R500 AI 08 061",
+        "AI 08 061",
+        "AI08 061",
+        "AI-08-061",
+        "AI_08_061"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модули аналогового ввода: добавлены модуль R500 AI 08 023 и R500 AI 08 061"
+      ]
+    },
+    {
+      "canonical": "R500 AI 16 081",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "AI 16 081",
+      "article_numbers": [
+        "R500 AI 16 081"
+      ],
+      "function": "analog_input",
+      "russian_name": "модуль аналогового ввода",
+      "aliases": [
+        "R500 AI 16 081",
+        "AI 16 081",
+        "AI16 081",
+        "AI-16-081",
+        "AI_16_081",
+        "модуль AI 16 081",
+        "модуль R500 AI 16 081",
+        "аналоговый модуль AI 16 081"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модуль аналогового ввода AI 16 081"
+      ]
+    },
+    {
+      "canonical": "R500S AI 04 841",
+      "entity_type": "module",
+      "product_family": "Regul R500S",
+      "module_code": "AI 04 841",
+      "article_numbers": [
+        "R500S AI 04 841"
+      ],
+      "function": "analog_input",
+      "russian_name": "модуль аналогового ввода",
+      "aliases": [
+        "R500S AI 04 841",
+        "AI 04 841",
+        "AI04 841",
+        "AI-04-841",
+        "AI_04_841",
+        "аналоговый ввод R500S",
+        "модуль AI R500S",
+        "модуль AI 04 841"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модуль аналогового ввода AI 04 841"
+      ]
+    },
+    {
+      "canonical": "R500S AI 08 851",
+      "entity_type": "module",
+      "product_family": "Regul R500S",
+      "module_code": "AI 08 851",
+      "article_numbers": [
+        "R500S AI 08 851"
+      ],
+      "function": "analog_input",
+      "russian_name": "модуль аналогового ввода",
+      "aliases": [
+        "R500S AI 08 851",
+        "AI 08 851",
+        "AI08 851",
+        "AI-08-851",
+        "AI_08_851"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модуль аналогового ввода AI 08 851"
+      ]
+    },
+    {
+      "canonical": "R500S AI 04 861",
+      "entity_type": "module",
+      "product_family": "Regul R500S",
+      "module_code": "AI 04 861",
+      "article_numbers": [
+        "R500S AI 04 861"
+      ],
+      "function": "analog_input",
+      "russian_name": "модуль аналогового ввода",
+      "aliases": [
+        "R500S AI 04 861",
+        "AI 04 861",
+        "AI04 861",
+        "AI-04-861",
+        "AI_04_861"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модуль аналогового ввода AI 04 861"
+      ]
+    },
+    {
+      "canonical": "R500S AI 08 881",
+      "entity_type": "module",
+      "product_family": "Regul R500S",
+      "module_code": "AI 08 881",
+      "article_numbers": [
+        "R500S AI 08 881"
+      ],
+      "function": "analog_input",
+      "russian_name": "модуль аналогового ввода",
+      "aliases": [
+        "R500S AI 08 881",
+        "AI 08 881",
+        "AI08 881",
+        "AI-08-881",
+        "AI_08_881",
+        "модуль AI 08 881",
+        "модуль R500S AI 08 881",
+        "плата PLC500S-AI08-881"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модуль аналогового ввода AI 08 881"
+      ]
+    },
+    {
+      "canonical": "R500 AO 08 011",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "AO 08 011",
+      "article_numbers": [
+        "R500 AO 08 011"
+      ],
+      "function": "analog_output",
+      "russian_name": "модуль аналогового вывода",
+      "aliases": [
+        "R500 AO 08 011",
+        "AO 08 011",
+        "AO08 011",
+        "AO-08-011",
+        "AO_08_011",
+        "аналоговый вывод R500",
+        "модуль AO R500",
+        "модуль AO 08 011",
+        "аналоговый модуль AO 08 011",
+        "модуль R500 AO 08 011"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модуль R500 АО 08 011: изменен расширенный диапазон"
+      ]
+    },
+    {
+      "canonical": "R500 AO 08 021",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "AO 08 021",
+      "article_numbers": [
+        "R500 AO 08 021"
+      ],
+      "function": "analog_output",
+      "russian_name": "модуль аналогового вывода",
+      "aliases": [
+        "R500 AO 08 021",
+        "AO 08 021",
+        "AO08 021",
+        "AO-08-021",
+        "AO_08_021",
+        "модуль AO 08 021",
+        "модуль R500 AO 08 021"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модули аналогового вывода: добавлен модуль R500 АО 08 021"
+      ]
+    },
+    {
+      "canonical": "R500 AO 08 031",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "AO 08 031",
+      "article_numbers": [
+        "R500 AO 08 031"
+      ],
+      "function": "analog_output",
+      "russian_name": "модуль аналогового вывода",
+      "aliases": [
+        "R500 AO 08 031",
+        "AO 08 031",
+        "AO08 031",
+        "AO-08-031",
+        "AO_08_031",
+        "модуль AO 08 031"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модуль аналогового вывода АО 08 031"
+      ]
+    },
+    {
+      "canonical": "R500S AO 04 831",
+      "entity_type": "module",
+      "product_family": "Regul R500S",
+      "module_code": "AO 04 831",
+      "article_numbers": [
+        "R500S AO 04 831"
+      ],
+      "function": "analog_output",
+      "russian_name": "модуль аналогового вывода",
+      "aliases": [
+        "R500S AO 04 831",
+        "AO 04 831",
+        "AO04 831",
+        "AO-04-831",
+        "AO_04_831",
+        "аналоговый вывод R500S",
+        "модуль AO R500S"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модуль аналогового вывода АО 04 831"
+      ]
+    },
+    {
+      "canonical": "R500 AS 08 011",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "AS 08 011",
+      "article_numbers": [
+        "R500 AS 08 011"
+      ],
+      "function": "analog_output",
+      "russian_name": "модуль аналоговый комбинированный",
+      "aliases": [
+        "R500 AS 08 011",
+        "AS 08 011",
+        "AS08 011",
+        "AS-08-011",
+        "AS_08_011",
+        "комбинированный аналоговый R500",
+        "модуль AS 08 011",
+        "модуль R500 AS 08 011"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модуль аналоговый комбинированный AS 08 011"
+      ]
+    },
+    {
+      "canonical": "R500 DI 32 011",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "DI 32 011",
+      "article_numbers": [
+        "R500 DI 32 011"
+      ],
+      "function": "digital_input",
+      "russian_name": "модуль дискретного ввода",
+      "aliases": [
+        "R500 DI 32 011",
+        "DI 32 011",
+        "DI32 011",
+        "DI-32-011",
+        "DI_32_011",
+        "дискретный вход R500",
+        "модуль DI R500",
+        "модуль DI 32 011",
+        "модуль R500 DI 32 011",
+        "дискретный модуль DI-32-011"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модули дискретного ввода DI 32 011"
+      ]
+    },
+    {
+      "canonical": "R500 DI 32 012",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "DI 32 012",
+      "article_numbers": [
+        "R500 DI 32 012"
+      ],
+      "function": "digital_input",
+      "russian_name": "модуль дискретного ввода",
+      "aliases": [
+        "R500 DI 32 012",
+        "DI 32 012",
+        "DI32 012",
+        "DI-32-012",
+        "DI_32_012",
+        "модуль DI 32 012",
+        "модуль R500 DI 32 012"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модули дискретного ввода: добавлены модули R500 DI 32 012"
+      ]
+    },
+    {
+      "canonical": "R500 DI 32 013",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "DI 32 013",
+      "article_numbers": [
+        "R500 DI 32 013"
+      ],
+      "function": "digital_input",
+      "russian_name": "модуль дискретного ввода",
+      "aliases": [
+        "R500 DI 32 013",
+        "DI 32 013",
+        "DI32 013",
+        "DI-32-013",
+        "DI_32_013",
+        "модуль DI-32-013",
+        "модуль R500 DI 32 013"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модули дискретного ввода: добавлен модуль дискретного ввода R500 DI 32 013"
+      ]
+    },
+    {
+      "canonical": "R500 DI 32 111",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "DI 32 111",
+      "article_numbers": [
+        "R500 DI 32 111"
+      ],
+      "function": "digital_input",
+      "russian_name": "модуль дискретного ввода",
+      "aliases": [
+        "R500 DI 32 111",
+        "DI 32 111",
+        "DI32 111",
+        "DI-32-111",
+        "DI_32_111"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модули дискретного ввода: добавлен модуль R500 DI 32 111"
+      ]
+    },
+    {
+      "canonical": "R500 DI 16 021",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "DI 16 021",
+      "article_numbers": [
+        "R500 DI 16 021"
+      ],
+      "function": "digital_input",
+      "russian_name": "модуль дискретного ввода",
+      "aliases": [
+        "R500 DI 16 021",
+        "DI 16 021",
+        "DI16 021",
+        "DI-16-021",
+        "DI_16_021",
+        "модуль DI 16 021"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модуль дискретного ввода DI 16 021"
+      ]
+    },
+    {
+      "canonical": "R500 DI 16 032",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "DI 16 032",
+      "article_numbers": [
+        "R500 DI 16 032"
+      ],
+      "function": "digital_input",
+      "russian_name": "модуль дискретного ввода",
+      "aliases": [
+        "R500 DI 16 032",
+        "DI 16 032",
+        "DI16 032",
+        "DI-16-032",
+        "DI_16_032",
+        "модуль DI16032",
+        "модуль R500 DI 16 032"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модули дискретного ввода: добавлены модули R500 DI 32 012, R500 DI 16 032"
+      ]
+    },
+    {
+      "canonical": "R500S DI 28 811",
+      "entity_type": "module",
+      "product_family": "Regul R500S",
+      "module_code": "DI 28 811",
+      "article_numbers": [
+        "R500S DI 28 811"
+      ],
+      "function": "digital_input",
+      "russian_name": "модуль дискретного ввода",
+      "aliases": [
+        "R500S DI 28 811",
+        "DI 28 811",
+        "DI28 811",
+        "DI-28-811",
+        "DI_28_811",
+        "дискретный вход R500S",
+        "модуль DI R500S",
+        "модуль DI 28 811"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модуль дискретного ввода DI 28 811"
+      ]
+    },
+    {
+      "canonical": "R500S DI 16 831",
+      "entity_type": "module",
+      "product_family": "Regul R500S",
+      "module_code": "DI 16 831",
+      "article_numbers": [
+        "R500S DI 16 831"
+      ],
+      "function": "digital_input",
+      "russian_name": "модуль дискретного ввода",
+      "aliases": [
+        "R500S DI 16 831",
+        "DI 16 831",
+        "DI16 831",
+        "DI-16-831",
+        "DI_16_831",
+        "модуль DI 16 831"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модуль дискретного ввода DI 16 831"
+      ]
+    },
+    {
+      "canonical": "R500 DO 32 011",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "DO 32 011",
+      "article_numbers": [
+        "R500 DO 32 011"
+      ],
+      "function": "digital_output",
+      "russian_name": "модуль дискретного вывода",
+      "aliases": [
+        "R500 DO 32 011",
+        "DO 32 011",
+        "DO32 011",
+        "DO-32-011",
+        "DO_32_011",
+        "дискретный выход R500",
+        "модуль DO R500",
+        "модуль DO 32 011",
+        "блок DO32011",
+        "модуль R500 DO 32 011"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модули дискретного вывода DO 32 011"
+      ]
+    },
+    {
+      "canonical": "R500 DO 32 012",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "DO 32 012",
+      "article_numbers": [
+        "R500 DO 32 012"
+      ],
+      "function": "digital_output",
+      "russian_name": "модуль дискретного вывода",
+      "aliases": [
+        "R500 DO 32 012",
+        "DO 32 012",
+        "DO32 012",
+        "DO-32-012",
+        "DO_32_012",
+        "модуль DO 32 012",
+        "модуль R500 DO 32 012",
+        "шасси DO 32 012"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модули дискретного вывода: добавлены модули R500 DO 32 012"
+      ]
+    },
+    {
+      "canonical": "R500 DO 32 013",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "DO 32 013",
+      "article_numbers": [
+        "R500 DO 32 013"
+      ],
+      "function": "digital_output",
+      "russian_name": "модуль дискретного вывода",
+      "aliases": [
+        "R500 DO 32 013",
+        "DO 32 013",
+        "DO32 013",
+        "DO-32-013",
+        "DO_32_013"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модули дискретного вывода: добавлен модуль дискретного вывода R500 DO 32 013"
+      ]
+    },
+    {
+      "canonical": "R500 DO 32 041",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "DO 32 041",
+      "article_numbers": [
+        "R500 DO 32 041"
+      ],
+      "function": "digital_output",
+      "russian_name": "модуль дискретного вывода",
+      "aliases": [
+        "R500 DO 32 041",
+        "DO 32 041",
+        "DO32 041",
+        "DO-32-041",
+        "DO_32_041",
+        "модуль DO 32 041",
+        "модуль R500 DO 32 041"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модуль дискретного вывода DO 32 041"
+      ]
+    },
+    {
+      "canonical": "R500 DO 16 021",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "DO 16 021",
+      "article_numbers": [
+        "R500 DO 16 021"
+      ],
+      "function": "digital_output",
+      "russian_name": "модуль дискретного вывода",
+      "aliases": [
+        "R500 DO 16 021",
+        "DO 16 021",
+        "DO16 021",
+        "DO-16-021",
+        "DO_16_021",
+        "модуль R500 DO 16 021"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модуль R500 DO 16 021: дополнено описание"
+      ]
+    },
+    {
+      "canonical": "R500S DO 16 811",
+      "entity_type": "module",
+      "product_family": "Regul R500S",
+      "module_code": "DO 16 811",
+      "article_numbers": [
+        "R500S DO 16 811"
+      ],
+      "function": "digital_output",
+      "russian_name": "модуль дискретного вывода",
+      "aliases": [
+        "R500S DO 16 811",
+        "DO 16 811",
+        "DO16 811",
+        "DO-16-811",
+        "DO_16_811",
+        "дискретный выход R500S",
+        "модуль DO R500S",
+        "модуль DO 16 811",
+        "выход DO 16 811",
+        "модуль R500S DO 16 811",
+        "плата PLC500S-DO16-811"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модуль дискретного вывода DO 16 811"
+      ]
+    },
+    {
+      "canonical": "R500S DO 08 821",
+      "entity_type": "module",
+      "product_family": "Regul R500S",
+      "module_code": "DO 08 821",
+      "article_numbers": [
+        "R500S DO 08 821"
+      ],
+      "function": "digital_output",
+      "russian_name": "модуль дискретного вывода",
+      "aliases": [
+        "R500S DO 08 821",
+        "DO 08 821",
+        "DO08 821",
+        "DO-08-821",
+        "DO_08_821",
+        "модуль R500S DO 08 821",
+        "модуль DO 08 821"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модуль дискретного вывода DO 08 821"
+      ]
+    },
+    {
+      "canonical": "R500 DS 32 011",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "DS 32 011",
+      "article_numbers": [
+        "R500 DS 32 011"
+      ],
+      "function": "unknown",
+      "russian_name": "модули дискретные комбинированные",
+      "aliases": [
+        "R500 DS 32 011",
+        "DS 32 011",
+        "DS32 011",
+        "DS-32-011",
+        "DS_32_011",
+        "комбинированный дискретный R500",
+        "модуль DS 32 011",
+        "модуль r500-ds32011"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модули дискретные комбинированные DS 32 011"
+      ]
+    },
+    {
+      "canonical": "R500 DS 32 012",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "DS 32 012",
+      "article_numbers": [
+        "R500 DS 32 012"
+      ],
+      "function": "unknown",
+      "russian_name": "модули дискретные комбинированные",
+      "aliases": [
+        "R500 DS 32 012",
+        "DS 32 012",
+        "DS32 012",
+        "DS-32-012",
+        "DS_32_012",
+        "модуль DS 32 012",
+        "модуль R500 DS 32 012"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модули дискретные комбинированные: добавлен модуль R500 DS 32 012"
+      ]
+    },
+    {
+      "canonical": "R500 DA 03 011",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "DA 03 011",
+      "article_numbers": [
+        "R500 DA 03 011"
+      ],
+      "function": "unknown",
+      "russian_name": "модуль счета импульсов",
+      "aliases": [
+        "R500 DA 03 011",
+        "DA 03 011",
+        "DA03 011",
+        "DA-03-011",
+        "DA_03_011",
+        "счет импульсов R500",
+        "модуль DA R500",
+        "модуль DA 03 011",
+        "модуль R500 DA 03 011"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "модуле счета импульсов R500 DA 03 011"
+      ]
+    },
+    {
+      "canonical": "R500 DA 03 021",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "DA 03 021",
+      "article_numbers": [
+        "R500 DA 03 021"
+      ],
+      "function": "unknown",
+      "russian_name": "модуль счета импульсов",
+      "aliases": [
+        "R500 DA 03 021",
+        "DA 03 021",
+        "DA03 021",
+        "DA-03-021",
+        "DA_03_021",
+        "модуль DA 03 021",
+        "модуль R500 DA 03 021"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модуль R500 DA 03 021: изменена схема"
+      ]
+    },
+    {
+      "canonical": "R500 CP 04 011",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "CP 04 011",
+      "article_numbers": [
+        "R500 CP 04 011"
+      ],
+      "function": "communication_module",
+      "russian_name": "модуль коммуникационного процессора",
+      "aliases": [
+        "R500 CP 04 011",
+        "CP 04 011",
+        "CP04 011",
+        "CP-04-011",
+        "CP_04_011",
+        "коммуникационный модуль R500",
+        "модуль CP R500",
+        "модуль CP 04 011",
+        "коммуникационный модуль CP 04 011",
+        "модуль R500 CP 04 011",
+        "коммуникационный процессор R500 CP 04 011",
+        "коммуникационный процессор CP 04 011"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модуль R500 СР 04 011: добавлено описание",
+        "R500 CP 04 011 Модуль коммуникационного процессора"
+      ]
+    },
+    {
+      "canonical": "R500 CP 04 012",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "CP 04 012",
+      "article_numbers": [
+        "R500 CP 04 012"
+      ],
+      "function": "communication_module",
+      "russian_name": "модуль коммуникационного процессора",
+      "aliases": [
+        "R500 CP 04 012",
+        "CP 04 012",
+        "CP04 012",
+        "CP-04-012",
+        "CP_04_012"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модули коммуникационного процессора: добавлен модуль R500 СР 04 012"
+      ]
+    },
+    {
+      "canonical": "R500 CP 02 021",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "CP 02 021",
+      "article_numbers": [
+        "R500 CP 02 021"
+      ],
+      "function": "communication_module",
+      "russian_name": "модуль коммуникационного процессора",
+      "aliases": [
+        "R500 CP 02 021",
+        "CP 02 021",
+        "CP02 021",
+        "CP-02-021",
+        "CP_02_021",
+        "модуль CP 02 021",
+        "коммуникационный модуль CP 02 021",
+        "модуль R500 CP 02 021",
+        "коммуникационный модуль R500 CP 02 021",
+        "коммуникационный процессор R500 CP 02 021",
+        "коммуникационный процессор CP 02 021"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 CP 02 021 Модуль коммуникационного процессора"
+      ]
+    },
+    {
+      "canonical": "R500 CP 01 031",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "CP 01 031",
+      "article_numbers": [
+        "R500 CP 01 031"
+      ],
+      "function": "communication_module",
+      "russian_name": "модуль коммуникационного процессора",
+      "aliases": [
+        "R500 CP 01 031",
+        "CP 01 031",
+        "CP01 031",
+        "CP-01-031",
+        "CP_01_031",
+        "модуль CP 01 031",
+        "модуль R500 CP 01 031",
+        "коммуникационный процессор R500 CP 01 031"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модули коммуникационного процессора: добавлен модуль СР 01 031"
+      ]
+    },
+    {
+      "canonical": "R500 CP 04 041",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "CP 04 041",
+      "article_numbers": [
+        "R500 CP 04 041"
+      ],
+      "function": "communication_module",
+      "russian_name": "модуль коммуникационного процессора",
+      "aliases": [
+        "R500 CP 04 041",
+        "CP 04 041",
+        "CP04 041",
+        "CP-04-041",
+        "CP_04_041",
+        "модуль CP04041"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модуль коммуникационного процессора СР 04 041"
+      ]
+    },
+    {
+      "canonical": "R500 CP 06 111",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "CP 06 111",
+      "article_numbers": [
+        "R500 CP 06 111"
+      ],
+      "function": "communication_module",
+      "russian_name": "модуль расширения шины RegulBus",
+      "aliases": [
+        "R500 CP 06 111",
+        "CP 06 111",
+        "CP06 111",
+        "CP-06-111",
+        "CP_06_111",
+        "расширение шины R500",
+        "коммуникационный процессор CP 06 111",
+        "модуль CP 06 111",
+        "модуль R500 CP 06 111"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модуль R500 СР 06 111: дополнено техническое описание"
+      ]
+    },
+    {
+      "canonical": "R500 PP 00 011",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "PP 00 011",
+      "article_numbers": [
+        "R500 PP 00 011"
+      ],
+      "function": "power_supply",
+      "russian_name": "модуль источника питания",
+      "aliases": [
+        "R500 PP 00 011",
+        "PP 00 011",
+        "PP00 011",
+        "PP-00-011",
+        "PP_00_011",
+        "блок питания R500",
+        "модуль ИП R500",
+        "модуль питания PP 00 011",
+        "модуль R500 PP 00 011",
+        "блок питания(PP 00 011",
+        "модуль PP 00 011",
+        "контроллер R500 PP 00 011"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 PP 00 011 Модуль источника питания"
+      ]
+    },
+    {
+      "canonical": "R500 PP 00 021",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "PP 00 021",
+      "article_numbers": [
+        "R500 PP 00 021"
+      ],
+      "function": "power_supply",
+      "russian_name": "модуль источника питания",
+      "aliases": [
+        "R500 PP 00 021",
+        "PP 00 021",
+        "PP00 021",
+        "PP-00-021",
+        "PP_00_021",
+        "блок питания PP 00 021",
+        "блок питания R500 PP 00 021",
+        "модуль PP 00 021"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 PP 00 021 Модуль источника питания"
+      ]
+    },
+    {
+      "canonical": "R500 PP 00 022",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "PP 00 022",
+      "article_numbers": [
+        "R500 PP 00 022"
+      ],
+      "function": "power_supply",
+      "russian_name": "модуль источника питания",
+      "aliases": [
+        "R500 PP 00 022",
+        "PP 00 022",
+        "PP00 022",
+        "PP-00-022",
+        "PP_00_022"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модули источника питания: добавлен модуль R500 РР 00 022"
+      ]
+    },
+    {
+      "canonical": "R500 PP 00 031",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "PP 00 031",
+      "article_numbers": [
+        "R500 PP 00 031"
+      ],
+      "function": "power_supply",
+      "russian_name": "модуль источника питания",
+      "aliases": [
+        "R500 PP 00 031",
+        "PP 00 031",
+        "PP00 031",
+        "PP-00-031",
+        "PP_00_031",
+        "блок питания PP 00 031",
+        "модуль R500 PP 00 031"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модули источника питания: добавлен модуль R500 PP 00 031"
+      ]
+    },
+    {
+      "canonical": "R500 PP 00 051",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "PP 00 051",
+      "article_numbers": [
+        "R500 PP 00 051"
+      ],
+      "function": "power_supply",
+      "russian_name": "модуль источника питания",
+      "aliases": [
+        "R500 PP 00 051",
+        "PP 00 051",
+        "PP00 051",
+        "PP-00-051",
+        "PP_00_051",
+        "модуль R500 PP 00 051"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модули источника питания: добавлен модуль R500 РР 00 051"
+      ]
+    },
+    {
+      "canonical": "R500 PO 08 041",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "PO 08 041",
+      "article_numbers": [
+        "R500 PO 08 041"
+      ],
+      "function": "power_supply",
+      "russian_name": "модуль источника внешнего питания",
+      "aliases": [
+        "R500 PO 08 041",
+        "PO 08 041",
+        "PO08 041",
+        "PO-08-041",
+        "PO_08_041",
+        "внешнее питание R500"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Модули источника питания: добавлен модуль R500 РО 08 041"
+      ]
+    },
+    {
+      "canonical": "R500 EU 04 021",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "EU 04 021",
+      "article_numbers": [
+        "R500 EU 04 021"
+      ],
+      "function": "interface_module",
+      "russian_name": "блок расширения центрального процессора",
+      "aliases": [
+        "R500 EU 04 021",
+        "EU 04 021",
+        "EU04 021",
+        "EU-04-021",
+        "EU_04_021",
+        "блок расширения ЦП R500",
+        "ЦП R500 EU 04 021",
+        "модуль R500 EU 04 021",
+        "модуль EU 04 021",
+        "коммуникационный блок EU 04 021",
+        "ЦП EU 04 021",
+        "блок EU 04 021"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Добавлен раздел «Блоки расширения модулей центрального процессора» с описанием для: R500 EU 04 021"
+      ]
+    },
+    {
+      "canonical": "R500 EU 04 031",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "EU 04 031",
+      "article_numbers": [
+        "R500 EU 04 031"
+      ],
+      "function": "interface_module",
+      "russian_name": "блок расширения центрального процессора",
+      "aliases": [
+        "R500 EU 04 031",
+        "EU 04 031",
+        "EU04 031",
+        "EU-04-031",
+        "EU_04_031"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "Добавлен раздел «Блоки расширения модулей центрального процессора» с описанием для: R500 EU 04 031"
+      ]
+    },
+    {
+      "canonical": "R500 ST 00 001",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "ST 00 001",
+      "article_numbers": [
+        "R500 ST 00 001"
+      ],
+      "function": "interface_module",
+      "russian_name": "модуль оконечный",
+      "aliases": [
+        "R500 ST 00 001",
+        "ST 00 001",
+        "ST00 001",
+        "ST-00-001",
+        "ST_00_001",
+        "оконечный модуль R500",
+        "модуль R500 ST 00 001",
+        "оконечный модуль R500 St 00 001",
+        "модуль оконечный ST 00 001"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 ST 00 001 Модуль оконечный"
+      ]
+    },
+    {
+      "canonical": "R500 ST 01 012",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "ST 01 012",
+      "article_numbers": [
+        "R500 ST 01 012"
+      ],
+      "function": "interface_module",
+      "russian_name": "модуль оконечный",
+      "aliases": [
+        "R500 ST 01 012",
+        "ST 01 012",
+        "ST01 012",
+        "ST-01-012",
+        "ST_01_012",
+        "модуль оконечный R500 ST 01 012"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 ST 01 012 Модуль оконечный"
+      ]
+    },
+    {
+      "canonical": "R500 ST 01 013",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "ST 01 013",
+      "article_numbers": [
+        "R500 ST 01 013"
+      ],
+      "function": "interface_module",
+      "russian_name": "модуль оконечный",
+      "aliases": [
+        "R500 ST 01 013",
+        "ST 01 013",
+        "ST01 013",
+        "ST-01-013",
+        "ST_01_013",
+        "модуль ST 01 013"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 ST 01 013 Модуль оконечный"
+      ]
+    },
+    {
+      "canonical": "R500 ST 01 022",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "ST 01 022",
+      "article_numbers": [
+        "R500 ST 01 022"
+      ],
+      "function": "interface_module",
+      "russian_name": "модуль оконечный",
+      "aliases": [
+        "R500 ST 01 022",
+        "ST 01 022",
+        "ST01 022",
+        "ST-01-022",
+        "ST_01_022",
+        "выход R500 ST 01 022"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 ST 01 022 Модуль оконечный"
+      ]
+    },
+    {
+      "canonical": "R500 ST 01 023",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "ST 01 023",
+      "article_numbers": [
+        "R500 ST 01 023"
+      ],
+      "function": "interface_module",
+      "russian_name": "модуль оконечный",
+      "aliases": [
+        "R500 ST 01 023",
+        "ST 01 023",
+        "ST01 023",
+        "ST-01-023",
+        "ST_01_023"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 ST 01 023 Модуль оконечный"
+      ]
+    },
+    {
+      "canonical": "R500 ST 01 113",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "ST 01 113",
+      "article_numbers": [
+        "R500 ST 01 113"
+      ],
+      "function": "interface_module",
+      "russian_name": "модуль оконечный",
+      "aliases": [
+        "R500 ST 01 113",
+        "ST 01 113",
+        "ST01 113",
+        "ST-01-113",
+        "ST_01_113"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 ST 01 113 Модуль оконечный"
+      ]
+    },
+    {
+      "canonical": "R500 ST 01 123",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "ST 01 123",
+      "article_numbers": [
+        "R500 ST 01 123"
+      ],
+      "function": "interface_module",
+      "russian_name": "модуль оконечный",
+      "aliases": [
+        "R500 ST 01 123",
+        "ST 01 123",
+        "ST01 123",
+        "ST-01-123",
+        "ST_01_123"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 ST 01 123 Модуль оконечный"
+      ]
+    },
+    {
+      "canonical": "R500 ST 02 012",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "ST 02 012",
+      "article_numbers": [
+        "R500 ST 02 012"
+      ],
+      "function": "interface_module",
+      "russian_name": "модуль оконечный",
+      "aliases": [
+        "R500 ST 02 012",
+        "ST 02 012",
+        "ST02 012",
+        "ST-02-012",
+        "ST_02_012",
+        "модуль оконечный R500 ST 02 012",
+        "модуль R500 ST 02 012",
+        "оконечный модуль R500 ST 02 012",
+        "оконечный модуль ST 02 012"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 ST 02 012 Модуль оконечный"
+      ]
+    },
+    {
+      "canonical": "R500 ST 02 013",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "ST 02 013",
+      "article_numbers": [
+        "R500 ST 02 013"
+      ],
+      "function": "interface_module",
+      "russian_name": "модуль оконечный",
+      "aliases": [
+        "R500 ST 02 013",
+        "ST 02 013",
+        "ST02 013",
+        "ST-02-013",
+        "ST_02_013",
+        "модуль оконечный R500 ST 02 013",
+        "модуль оконечный ST 02 013",
+        "оконечный модуль R500ST 02 013"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 ST 02 013 Модуль оконечный"
+      ]
+    },
+    {
+      "canonical": "R500 ST 02 022",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "ST 02 022",
+      "article_numbers": [
+        "R500 ST 02 022"
+      ],
+      "function": "interface_module",
+      "russian_name": "модуль оконечный",
+      "aliases": [
+        "R500 ST 02 022",
+        "ST 02 022",
+        "ST02 022",
+        "ST-02-022",
+        "ST_02_022",
+        "модуль R500 ST02 022",
+        "оконечный модуль R500 ST 02 022",
+        "оконечный модуль ST 02 022",
+        "контроллер R500 ST 02 022"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 ST 02 022 Модуль оконечный"
+      ]
+    },
+    {
+      "canonical": "R500 ST 02 023",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "ST 02 023",
+      "article_numbers": [
+        "R500 ST 02 023"
+      ],
+      "function": "interface_module",
+      "russian_name": "модуль оконечный",
+      "aliases": [
+        "R500 ST 02 023",
+        "ST 02 023",
+        "ST02 023",
+        "ST-02-023",
+        "ST_02_023",
+        "модуль оконечный R500 ST 02 023"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 ST 02 023 Модуль оконечный"
+      ]
+    },
+    {
+      "canonical": "R500 ST 02 111",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "ST 02 111",
+      "article_numbers": [
+        "R500 ST 02 111"
+      ],
+      "function": "interface_module",
+      "russian_name": "модуль оконечный",
+      "aliases": [
+        "R500 ST 02 111",
+        "ST 02 111",
+        "ST02 111",
+        "ST-02-111",
+        "ST_02_111",
+        "модуль R500 ST 02 111",
+        "оконечный R500 ST 02 111",
+        "модуль ST 02 111"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 ST 02 111 Модуль оконечный"
+      ]
+    },
+    {
+      "canonical": "R500 ST 02 113",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "ST 02 113",
+      "article_numbers": [
+        "R500 ST 02 113"
+      ],
+      "function": "interface_module",
+      "russian_name": "модуль оконечный",
+      "aliases": [
+        "R500 ST 02 113",
+        "ST 02 113",
+        "ST02 113",
+        "ST-02-113",
+        "ST_02_113",
+        "модуль ST 02 113",
+        "модуль R500 ST 02 113",
+        "модуль оконечный R500 ST 02 113",
+        "оконечный модуль ST 02 113",
+        "оконечный R500 ST 02 113"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 ST 02 113 Модуль оконечный"
+      ]
+    },
+    {
+      "canonical": "R500 ST 02 121",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "ST 02 121",
+      "article_numbers": [
+        "R500 ST 02 121"
+      ],
+      "function": "interface_module",
+      "russian_name": "модуль оконечный",
+      "aliases": [
+        "R500 ST 02 121",
+        "ST 02 121",
+        "ST02 121",
+        "ST-02-121",
+        "ST_02_121",
+        "модуль R500 ST 02 121",
+        "оконечный R500 ST 02 121",
+        "модуль ST 02 121"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 ST 02 121 Модуль оконечный"
+      ]
+    },
+    {
+      "canonical": "R500 ST 02 123",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "ST 02 123",
+      "article_numbers": [
+        "R500 ST 02 123"
+      ],
+      "function": "interface_module",
+      "russian_name": "модуль оконечный",
+      "aliases": [
+        "R500 ST 02 123",
+        "ST 02 123",
+        "ST02 123",
+        "ST-02-123",
+        "ST_02_123",
+        "оконечный модуль ST 02 123",
+        "модуль ST 02 123",
+        "модуль оконечный R500 ST 02 123",
+        "оконечный модуль R500 ST 02 123",
+        "модуль R500 ST 02 123",
+        "оконечный R500 ST 02 123"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 ST 02 123 Модуль оконечный"
+      ]
+    },
+    {
+      "canonical": "R500 CH 01 011",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "CH 01 011",
+      "article_numbers": [
+        "R500 CH 01 011"
+      ],
+      "function": "redundancy_module",
+      "russian_name": "модуль шасси",
+      "aliases": [
+        "R500 CH 01 011",
+        "CH 01 011",
+        "CH01 011",
+        "CH-01-011",
+        "CH_01_011",
+        "шасси R500",
+        "модуль шасси R500",
+        "шасси R500 CH 01 011",
+        "модуль шасси R500 CH 01 011",
+        "шасси CH-01-011",
+        "модуль CH01 011"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 CH 01 011 Модуль шасси"
+      ]
+    },
+    {
+      "canonical": "R500 CH 01 012",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "CH 01 012",
+      "article_numbers": [
+        "R500 CH 01 012"
+      ],
+      "function": "redundancy_module",
+      "russian_name": "модуль шасси",
+      "aliases": [
+        "R500 CH 01 012",
+        "CH 01 012",
+        "CH01 012",
+        "CH-01-012",
+        "CH_01_012",
+        "шасси R500 CH 01 012",
+        "модуль CH 01 012"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 CH 01 012 Модуль шасси с поддержкой резервирования шины питания"
+      ]
+    },
+    {
+      "canonical": "R500 CH 02 011",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "CH 02 011",
+      "article_numbers": [
+        "R500 CH 02 011"
+      ],
+      "function": "redundancy_module",
+      "russian_name": "модуль шасси",
+      "aliases": [
+        "R500 CH 02 011",
+        "CH 02 011",
+        "CH02 011",
+        "CH-02-011",
+        "CH_02_011",
+        "шасси CH 02 011",
+        "шасси R500 CH 02 011",
+        "модуль шасси R500 CH 02 011",
+        "модуль шасси CH 02 011",
+        "модуль CH 02 011"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 CH 02 011 Модуль шасси с поддержкой резервирования шины RegulBus"
+      ]
+    },
+    {
+      "canonical": "R500 CH 02 012",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "CH 02 012",
+      "article_numbers": [
+        "R500 CH 02 012"
+      ],
+      "function": "redundancy_module",
+      "russian_name": "модуль шасси",
+      "aliases": [
+        "R500 CH 02 012",
+        "CH 02 012",
+        "CH02 012",
+        "CH-02-012",
+        "CH_02_012",
+        "шасси ch 02 012",
+        "шасси R500 CH 02 012",
+        "модуль CH 02 012",
+        "модуль шасси R500 CH 02 012",
+        "модуль R500 CH 02 012",
+        "модуль шасси CH 02 012"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 CH 02 012 Модуль шасси с поддержкой резервирования шины RegulBus и шины питания"
+      ]
+    },
+    {
+      "canonical": "R500 CH 02 811",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "CH 02 811",
+      "article_numbers": [
+        "R500 CH 02 811"
+      ],
+      "function": "redundancy_module",
+      "russian_name": "модуль шасси",
+      "aliases": [
+        "R500 CH 02 811",
+        "CH 02 811",
+        "CH02 811",
+        "CH-02-811",
+        "CH_02_811",
+        "шасси CH 02 811",
+        "шасси R500 CH 02 811",
+        "шасси \"R500 CH 02 811",
+        "модуль R500 CH 02 811",
+        "модуль CH 02 811",
+        "модуль шасси R500 CH 02 811"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 CH 02 811* Модуль шасси с поддержкой резервирования шины RegulBus и шины питания"
+      ]
+    },
+    {
+      "canonical": "R500 CH 02 022",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "CH 02 022",
+      "article_numbers": [
+        "R500 CH 02 022"
+      ],
+      "function": "redundancy_module",
+      "russian_name": "модуль шасси",
+      "aliases": [
+        "R500 CH 02 022",
+        "CH 02 022",
+        "CH02 022",
+        "CH-02-022",
+        "CH_02_022",
+        "шасси R500 CH 02 022",
+        "ЦП CH 02 022",
+        "шасси CH 02 022"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 CH 02 022 Модуль шасси для модулей центрального процессора I/III-го типа"
+      ]
+    },
+    {
+      "canonical": "R500 CH 02 023",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "CH 02 023",
+      "article_numbers": [
+        "R500 CH 02 023"
+      ],
+      "function": "redundancy_module",
+      "russian_name": "модуль шасси",
+      "aliases": [
+        "R500 CH 02 023",
+        "CH 02 023",
+        "CH02 023",
+        "CH-02-023",
+        "CH_02_023",
+        "шасси R500 CH 02 023",
+        "модуль шасси R500 CH 02 023",
+        "шасси CH 02 023",
+        "модуль шасси CH 02 023",
+        "модуль CH 02 023",
+        "модуль R500 CH 02 023",
+        "шасси ЦП R500 CH 02 023"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 CH 02 023** Модуль шасси для модулей центрального процессора I/III-го типа с поддержкой блоков расширения"
+      ]
+    },
+    {
+      "canonical": "R500 CH 02 032",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "CH 02 032",
+      "article_numbers": [
+        "R500 CH 02 032"
+      ],
+      "function": "redundancy_module",
+      "russian_name": "модуль шасси",
+      "aliases": [
+        "R500 CH 02 032",
+        "CH 02 032",
+        "CH02 032",
+        "CH-02-032",
+        "CH_02_032",
+        "шасси R500 CH 02 032",
+        "шасси CH 02 032",
+        "модуль шасси R500 CH 02 032"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 CH 02 032 Модуль шасси для модулей центрального процессора II-го типа"
+      ]
+    },
+    {
+      "canonical": "R500 CH 02 033",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "CH 02 033",
+      "article_numbers": [
+        "R500 CH 02 033"
+      ],
+      "function": "redundancy_module",
+      "russian_name": "модуль шасси",
+      "aliases": [
+        "R500 CH 02 033",
+        "CH 02 033",
+        "CH02 033",
+        "CH-02-033",
+        "CH_02_033",
+        "шасси CH 02 033"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 CH 02 033 Модуль шасси для модулей центрального процессора II-го типа"
+      ]
+    },
+    {
+      "canonical": "R500 CH 02 041",
+      "entity_type": "module",
+      "product_family": "Regul R500",
+      "module_code": "CH 02 041",
+      "article_numbers": [
+        "R500 CH 02 041"
+      ],
+      "function": "redundancy_module",
+      "russian_name": "модуль шасси",
+      "aliases": [
+        "R500 CH 02 041",
+        "CH 02 041",
+        "CH02 041",
+        "CH-02-041",
+        "CH_02_041",
+        "шасси CH 02 041"
+      ],
+      "confidence": "high",
+      "evidence": [
+        "R500 CH 02 041 Модуль шасси для блока расширения центрального процессора III-го типа"
+      ]
+    }
+  ],
+  "last_alias_candidate_merge": {
+    "merged_at": "2026-06-09T06:06:49.789049+00:00",
+    "source": "ticket_json_or_llm_cache",
+    "candidate_stats": {
+      "entities": 100,
+      "ticket_files_scanned": 14494,
+      "tickets_with_matches": 4249,
+      "entities_with_candidates": 85,
+      "candidates": 291,
+      "min_count": 1
+    },
+    "auto_min_count": 5,
+    "allowed_confidence": [
+      "high"
+    ],
+    "promoted_candidates": 248,
+    "review_candidates": 43,
+    "skipped_existing_candidates": 0,
+    "missing_entities": []
+  }
+}

@@ -50,7 +50,7 @@ storage:
   vector_db:
     # Активная база: qdrant_v2_docker | qdrant_v1 | qdrant_tickets_test
     active: "qdrant_v2_docker"
-    second_db: "qdrant_tickets_filtered"
+    second_db: "qdrant_tickets_enriched"
     # Глобальные таймауты
     timeout_seconds: 10
     
@@ -103,6 +103,17 @@ storage:
           path: "vector_dbs/tickets_filtered/parents.db"
 
         description: "Очищенная отдельная база исторических тикетов"
+      
+      qdrant_tickets_enriched:
+        type: "qdrant"
+        url: "http://localhost:6333"
+        collection: "tickets_enriched_collection"
+
+        parent_store:
+          type: "sqlite"
+          path: "vector_dbs/tickets_enriched/parents.db"
+
+        description: "Очищенная база тикетов с авто-тегами и модулями"
 
 # === МОДЕЛИ (Эмбеддинги и реранкеры) ===
 models:

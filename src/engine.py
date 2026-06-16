@@ -2,7 +2,6 @@ import time
 import warnings
 from threading import Lock
 from typing import Any, Dict, List, Optional
-from urllib.parse import urljoin
 
 warnings.filterwarnings("ignore")
 
@@ -18,6 +17,24 @@ from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.runnables import Runnable, RunnablePassthrough
 
 from src.config import settings
+from src.context_formatting import (
+    SourceReference,
+    format_docs,
+    format_source_references,
+    format_ticket_docs,
+    is_ticket_document,
+    source_references,
+)
+from src.evidence_guard import apply_definition_guard, strict_evidence_context
+from src.module_detection import (
+    build_module_enriched_query,
+    detect_modules_in_query,
+    ensure_module_block,
+    format_detected_modules,
+    merge_documents,
+    module_doc_page_title_hints,
+    rank_tickets_for_modules,
+)
 from src.retrieval.dual_retriever import build_dual_retriever
 from src.logger import log, log_query_audit
 
@@ -138,21 +155,6 @@ class SimilarTicketSummary(BaseModel):
     ticket_url: str = Field(default="", description="URL обращения в портале, если он есть в metadata")
 
 
-class SourceReference(BaseModel):
-    """Ссылка на источник, найденный ретривером."""
-
-    source_id: str = ""
-    title: str
-    source_file: str
-    url: str = ""
-    source_type: str = ""
-    page_title: str = ""
-    release_version: str = ""
-    equipment_type: str = ""
-    library_name: str = ""
-    breadcrumb: str = ""
-
-
 class EvidenceNote(BaseModel):
     """Проверяемый тезис ответа и источники, которыми он подтверждается."""
 
@@ -245,160 +247,6 @@ class RoundRobinFallbackRunnable(Runnable):
                 log.warning("%s: ключ #%s не сработал, пробую следующий: %s", self.label, key_index, error)
 
         raise last_error or RuntimeError(f"{self.label}: no runnable succeeded")
-
-
-def trim_text(text: str, max_chars: int) -> str:
-    """Обрезает длинный контекст по границе строки, чтобы не переполнять лимит LLM."""
-    if max_chars <= 0 or len(text) <= max_chars:
-        return text
-    cut = text[:max_chars].rsplit("\n", 1)[0].strip()
-    if not cut:
-        cut = text[:max_chars].strip()
-    return f"{cut}\n\n[...контекст обрезан из-за лимита размера запроса...]"
-
-
-def format_docs(docs: List, *, max_total_chars: int = 12000, max_doc_chars: int = 3000) -> str:
-    """Форматирует документы для передачи в LLM.
-
-    Добавляет заголовок с типом источника: для тикетов — [ТИКЕТ ПОДДЕРЖКИ],
-    для документации — [equipment | файл | раздел].
-    """
-    if not docs:
-        log.warning("format_docs: Получен пустой список документов")
-        return ""
-
-    formatted = []
-    for i, d in enumerate(docs):
-        try:
-            meta      = d.metadata if hasattr(d, 'metadata') else {}
-            content   = d.page_content if hasattr(d, 'page_content') else str(d)
-            content = trim_text(content, max_doc_chars)
-            db_source = meta.get('db_source', 'docs')
-
-            if db_source == 'tickets':
-                header = f"[ТИКЕТ ПОДДЕРЖКИ | Файл: {meta.get('source_file', 'Unknown')}]"
-            else:
-                source_url = resolve_source_url(meta)
-                header = (
-                    f"[{meta.get('equipment_type', 'Unknown')} "
-                    f"| Library: {meta.get('library_name', 'Unknown')} "
-                    f"| Release: {meta.get('release_version', 'Unknown')} "
-                    f"| Page: {meta.get('page_title', 'Unknown')} "
-                    f"| Файл: {meta.get('source_file', 'Unknown')} "
-                    f"| Раздел: {meta.get('breadcrumb_raw', 'No section')} "
-                    f"| URL: {source_url}]"
-                )
-
-            formatted.append(f"{header}\n{content}")
-        except Exception as e:
-            log.error(f"Ошибка при форматировании документа {i}: {e}", exc_info=True)
-            if hasattr(d, 'page_content'):
-                formatted.append(trim_text(d.page_content, max_doc_chars))
-
-    return trim_text("\n\n".join(formatted), max_total_chars)
-
-
-def format_ticket_docs(docs: List, *, max_total_chars: int = 6000, max_doc_chars: int = 2000) -> str:
-    """Formats support tickets with stable IDs for the LLM."""
-    if not docs:
-        return ""
-
-    formatted = []
-    for d in docs:
-        meta = d.metadata if hasattr(d, "metadata") else {}
-        if not is_ticket_document(d):
-            continue
-        ticket_id = meta.get("ticket_id") or meta.get("source_file", "Unknown")
-        source_file = meta.get("source_file", "Unknown")
-        ticket_url = meta.get("ticket_url", "")
-        content = d.page_content if hasattr(d, "page_content") else str(d)
-        content = trim_text(content, max_doc_chars)
-        header = f"[TICKET | id: {ticket_id} | file: {source_file} | url: {ticket_url}]"
-        formatted.append(f"{header}\n{content}")
-
-    return trim_text("\n\n".join(formatted), max_total_chars)
-
-
-def is_ticket_document(doc) -> bool:
-    """Проверяет, что найденный документ действительно является обращением, а не документацией."""
-    meta = doc.metadata if hasattr(doc, "metadata") else {}
-    return bool(meta.get("ticket_id")) or meta.get("format") == "ticket" or meta.get("source_type") == "support_tickets"
-
-
-def resolve_source_url(meta: dict, *, ticket_only: bool = False) -> str:
-    """Строит URL источника из metadata или из корня источника и имени файла."""
-    if ticket_only:
-        return str(meta.get("ticket_url") or "")
-
-    direct_url = meta.get("source_url") or meta.get("url")
-    if direct_url:
-        return str(direct_url)
-
-    source_type = str(meta.get("source_type") or "")
-    source_file = str(meta.get("source_file") or "")
-    base_url = (
-        meta.get("source_root")
-        or meta.get("source_base_url")
-        or meta.get("base_url")
-        or meta.get("root_url")
-        or settings.docs_base_urls.get(source_type, "")
-    )
-    if base_url and source_file:
-        return urljoin(str(base_url).rstrip("/") + "/", source_file)
-    return ""
-
-
-def source_references(docs: List, *, ticket_only: bool = False, prefix: str = "S") -> List[SourceReference]:
-    """Собирает стабильный список источников из metadata найденных документов."""
-    result: List[SourceReference] = []
-    seen = set()
-    for doc in docs:
-        if ticket_only and not is_ticket_document(doc):
-            continue
-        meta = doc.metadata if hasattr(doc, "metadata") else {}
-        url = resolve_source_url(meta, ticket_only=ticket_only)
-        source_file = meta.get("source_file") or meta.get("ticket_id") or "Unknown"
-        title = meta.get("page_title") or meta.get("ticket_id") or meta.get("breadcrumb_raw") or source_file
-        key = (source_file, url)
-        if key in seen:
-            continue
-        seen.add(key)
-        result.append(SourceReference(
-            source_id=f"{prefix}{len(result) + 1}",
-            title=str(title),
-            source_file=str(source_file),
-            url=str(url),
-            source_type=str(meta.get("source_type", "")),
-            page_title=str(meta.get("page_title", "")),
-            release_version=str(meta.get("release_version", "")),
-            equipment_type=str(meta.get("equipment_type", "")),
-            library_name=str(meta.get("library_name", "")),
-            breadcrumb=str(meta.get("breadcrumb_raw", "")),
-        ))
-    return result
-
-
-def format_source_references(sources: List[SourceReference]) -> str:
-    """Форматирует источники для промпта так, чтобы LLM ссылалась на реальные документы."""
-    if not sources:
-        return "Источники не найдены."
-    lines = []
-    for source in sources:
-        location = source.url or source.source_file
-        details = []
-        if source.equipment_type:
-            details.append(f"equipment={source.equipment_type}")
-        if source.library_name:
-            details.append(f"library={source.library_name}")
-        if source.release_version:
-            details.append(f"release={source.release_version}")
-        if source.breadcrumb:
-            details.append(f"section={source.breadcrumb}")
-        detail_suffix = " | " + " | ".join(details) if details else ""
-        lines.append(
-            f"[{source.source_id}] {source.title} | file={source.source_file} | url={location}{detail_suffix}"
-        )
-    return "\n".join(lines)
 
 
 # ==========================================
@@ -628,6 +476,15 @@ class RAGEngine:
 Ты готовишь приватную подсказку инженеру техподдержки, а не финальный ответ клиенту.
 Ответ должен помогать инженеру проверить гипотезу, а не звучать как уверенное решение без доказательств.
 
+СТРОГИЙ РЕЖИМ ДОКАЗАТЕЛЬНОСТИ:
+- Утверждение считается подтвержденным только если оно прямо следует из текста фрагмента, помеченного тем же ID источника, например [D1] или [T1].
+- Список "Источники документации" сам по себе не является доказательством. Доказательством является только текст в блоках "Официальная документация", где в заголовке стоит тот же ID.
+- Запрещено выводить значение аббревиатуры, суффикса, буквы в маркировке или параметра по косвенным совпадениям. Для вопросов "что означает", "что значит", "расшифруй", "зачем буква/суффикс" нужен прямой текст источника с определением или явным описанием назначения.
+- Если прямого определения нет, пиши: "В найденных источниках прямого определения не найдено"; дальше можно перечислить только наблюдения из источников как наблюдения, а не как расшифровку.
+- Не используй формулировки "означает", "обозначает", "указывает на", если источник не говорит это явно. Используй "в найденных фрагментах встречается рядом с..." только в разделе гипотез.
+- Не объединяй две фразы из разных мест источника в новый вывод, если такая связь не указана в источнике явно.
+- Если один источник противоречит другому или источник говорит "нет поддержки", не превращай это в правило о значении маркировки.
+
 Обязательный стиль draft_private_comment:
 - Пиши по-русски.
 - Разделяй подтвержденные факты и предположения.
@@ -648,6 +505,12 @@ class RAGEngine:
 - confidence = medium если есть похожие случаи, но нет прямой инструкции.
 - confidence = low если есть только общие сведения или не хватает контекста.
 
+Исключение для справочных запросов по модулю:
+- Если пользователь просит "полную информацию", "характеристики", "описание", "что известно" по конкретному модулю, не оформляй draft_private_comment как диагностику инцидента.
+- В таком случае начни с раздела "Карточка модуля" и перечисли только подтвержденные документацией сведения: каноническое имя, назначение, характеристики, интерфейсы, диагностические параметры, ограничения и источники.
+- Не добавляй "Что запросить у клиента", если вопрос не похож на обращение о неисправности.
+- Похожие тикеты для справочного запроса используй только в конце как "Связанные обращения", не смешивай их с официальным описанием модуля.
+
 Правила для similar_tickets:
 - Добавляй тикет только если он реально помогает текущему обращению.
 - relevance_reason обязателен: укажи конкретное совпадение симптома, оборудования, версии, ошибки, лога или действия.
@@ -658,6 +521,7 @@ class RAGEngine:
 - Каждая claim должна быть проверяемым тезисом.
 - source_ids должны ссылаться только на доступные D/T источники.
 - Если тезис является предположением, напиши это в comment.
+- Не добавляй claim, если рядом с ним нельзя поставить конкретный ID фрагмента из "Официальная документация" или "Похожие обращения".
 
 Ты помощник инженера технической поддержки РегЛаб.
 
@@ -685,9 +549,17 @@ class RAGEngine:
 - Для каждого похожего тикета укажи номер обращения, кратко проблему, кратко решение и почему он похож.
 - Если данных мало, явно напиши, что нужно уточнить.
 - Верни валидный JSON по заданной схеме.
+- Если в блоке "Модули, определенные по вопросу" есть модули [M...], обязательно включи их в docs_answer и draft_private_comment без изменения кода и канонического имени.
+- Не заменяй канонический код модуля на похожий. Например, DI032011 должен оставаться R500 DI 32 011, а не DI 32 111.
 
 Заявка:
 {input}
+
+Режим доказательности:
+{strict_evidence_context}
+
+Модули, определенные по вопросу:
+{module_context}
 
 Официальная документация:
 {docs_context}
@@ -761,7 +633,27 @@ class RAGEngine:
         try:
             log.info(f"🔄 Приватная подсказка ТП: обработка заявки ({len(query)} символов)")
 
-            docs = self.retriever.retrieve_docs(query)
+            detected_modules = detect_modules_in_query(query)
+            module_context = format_detected_modules(detected_modules)
+            retrieval_query = build_module_enriched_query(query, detected_modules)
+            if detected_modules:
+                log.info(
+                    "Detected modules in query: %s",
+                    ", ".join(module.get("canonical", "") for module in detected_modules),
+                )
+
+            exact_doc_titles = module_doc_page_title_hints(detected_modules)
+            exact_module_docs = (
+                self.retriever.retrieve_docs_by_page_titles(exact_doc_titles, limit=20)
+                if exact_doc_titles and hasattr(self.retriever, "retrieve_docs_by_page_titles")
+                else []
+            )
+            if exact_module_docs:
+                log.info(
+                    "Added exact module documentation sections: %s",
+                    ", ".join(doc.metadata.get("page_title", "") for doc in exact_module_docs[:3]),
+                )
+            docs = merge_documents(exact_module_docs, self.retriever.retrieve_docs(retrieval_query))
             if settings.second_db_name == settings.active_db_name:
                 log.warning(
                     "Ticket retrieval disabled: second_db points to the docs backend (%s)",
@@ -769,20 +661,53 @@ class RAGEngine:
                 )
                 tickets = []
             else:
-                tickets = [
-                    doc for doc in self.retriever.retrieve_tickets(query)
+                module_codes = [
+                    str(module.get("module_code") or "").strip()
+                    for module in detected_modules
+                    if str(module.get("module_code") or "").strip()
+                ]
+                exact_module_tickets = (
+                    self.retriever.retrieve_tickets_by_module_codes(module_codes, limit=60)
+                    if detected_modules and hasattr(self.retriever, "retrieve_tickets_by_module_codes")
+                    else []
+                )
+                ticket_candidates = [
+                    doc for doc in self.retriever.retrieve_tickets(
+                        retrieval_query,
+                        final_limit=12 if detected_modules else 2,
+                        child_k=80 if detected_modules else None,
+                    )
                     if is_ticket_document(doc)
-                ][:2]
+                ]
+                merged_ticket_candidates: List[Any] = []
+                seen_ticket_ids = set()
+                for doc in [*exact_module_tickets, *ticket_candidates]:
+                    if not is_ticket_document(doc):
+                        continue
+                    ticket_id = doc.metadata.get("ticket_id") if hasattr(doc, "metadata") else None
+                    key = ticket_id or id(doc)
+                    if key in seen_ticket_ids:
+                        continue
+                    seen_ticket_ids.add(key)
+                    merged_ticket_candidates.append(doc)
+                tickets = rank_tickets_for_modules(
+                    merged_ticket_candidates,
+                    detected_modules,
+                    query=query,
+                    limit=2,
+                )
 
             doc_sources = source_references(docs, prefix="D")
             ticket_sources = source_references(tickets, ticket_only=True, prefix="T")
             docs_context = format_docs(
                 docs,
+                sources=doc_sources,
                 max_total_chars=SUPPORT_DOCS_MAX_CHARS,
                 max_doc_chars=SUPPORT_DOC_MAX_CHARS,
             )
             tickets_context = format_ticket_docs(
                 tickets,
+                sources=ticket_sources,
                 max_total_chars=SUPPORT_TICKETS_MAX_CHARS,
                 max_doc_chars=SUPPORT_TICKET_MAX_CHARS,
             )
@@ -796,13 +721,23 @@ class RAGEngine:
 
             response = self.support_chain.invoke({
                 "input": query,
+                "strict_evidence_context": strict_evidence_context(query),
+                "module_context": module_context,
                 "docs_context": docs_context,
                 "tickets_context": tickets_context,
                 "doc_sources_context": format_source_references(doc_sources),
                 "ticket_sources_context": format_source_references(ticket_sources),
             })
+            response = apply_definition_guard(response, query, docs_context, doc_sources)
+            if detected_modules:
+                response.docs_answer = ensure_module_block(response.docs_answer, detected_modules)
+                response.draft_private_comment = ensure_module_block(response.draft_private_comment, detected_modules)
             response.doc_sources = doc_sources
             response.ticket_sources = ticket_sources
+            response.evidence_notes = [
+                note for note in response.evidence_notes
+                if note.claim.strip() and note.source_ids
+            ]
             if not tickets:
                 response.similar_tickets = []
             else:

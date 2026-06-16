@@ -29,6 +29,8 @@ from src.config import settings  # noqa: E402
 
 DEFAULT_CACHE_DIR = PROJECT_ROOT / "data" / "llm_cache_tickets_filtered"
 RAW_CACHE_DIR = PROJECT_ROOT / "data" / "llm_cache_tickets"
+DEFAULT_TAG_TAXONOMY = PROJECT_ROOT / "data" / "ticket_tag_taxonomy.json"
+DEFAULT_MODULE_TAXONOMY = PROJECT_ROOT / "data" / "module_alias_taxonomy.json"
 MONTHLY_CACHE_RE = re.compile(r"^llm_cache_tickets_\d{4}-\d{2}-\d{2}$")
 SPARSE_VECTOR_NAME = "langchain-sparse"
 PARENT_NAMESPACE = "reglab_parents"
@@ -62,6 +64,11 @@ INLINE_NAME_FIELD_RE = re.compile(
     r"(?=(?:\u043a\u043e\u043c\u043f\u0430\u043d\u0438\u044f|\u0442\u0435\u043c\u0430|e-?mail|email|"
     r"\u0442\u0435\u043b\u0435\u0444\u043e\u043d|\u0432\u043e\u043f\u0440\u043e\u0441)\s*:)"
 )
+EQUIPMENT_CODE_GROUPS = {
+    "r01": "regul_r050_r100_r200_r400_r500_r600",
+    "r02": "regul_r500s",
+    "r03": "astraregul_platform",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -110,6 +117,23 @@ def parse_args() -> argparse.Namespace:
         "--dry-run",
         action="store_true",
         help="Read and validate the cache, but do not load embedding models or write to Qdrant.",
+    )
+    parser.add_argument(
+        "--tag-taxonomy",
+        type=Path,
+        default=DEFAULT_TAG_TAXONOMY,
+        help="Closed quality-tag taxonomy JSON for deterministic metadata enrichment.",
+    )
+    parser.add_argument(
+        "--module-taxonomy",
+        type=Path,
+        default=DEFAULT_MODULE_TAXONOMY,
+        help="Module alias taxonomy JSON for deterministic module metadata enrichment.",
+    )
+    parser.add_argument(
+        "--no-enrich-metadata",
+        action="store_true",
+        help="Disable deterministic quality tag and module enrichment.",
     )
     return parser.parse_args()
 
@@ -291,7 +315,279 @@ def scrub_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     return scrubbed
 
 
-def load_documents_from_file(path: Path, max_doc_chars: int) -> list[Document]:
+def list_text(value: Any) -> list[str]:
+    if value is None:
+        return []
+    values = value if isinstance(value, list) else [value]
+    return [str(item).strip() for item in values if str(item).strip()]
+
+
+def unique_texts(values: Iterable[Any]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        for item in list_text(value):
+            key = item.lower()
+            if key not in seen:
+                seen.add(key)
+                result.append(item)
+    return result
+
+
+def normalize_match_text(value: str) -> str:
+    value = str(value or "").lower().replace("ё", "е")
+    value = re.sub(r"[_\-.]+", " ", value)
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def normalize_compact_text(value: str) -> str:
+    value = str(value or "").lower().replace("ё", "е")
+    return re.sub(r"[^0-9a-zа-я]+", "", value)
+
+
+def contains_term(text_norm: str, term: str) -> bool:
+    term_norm = normalize_match_text(term)
+    if not term_norm:
+        return False
+    pattern = r"(?<![0-9a-zа-я])" + re.escape(term_norm) + r"(?![0-9a-zа-я])"
+    return re.search(pattern, text_norm, re.IGNORECASE) is not None
+
+
+def load_json_object(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8-sig"))
+    return data if isinstance(data, dict) else {}
+
+
+def quality_tag_rules(taxonomy_path: Path) -> list[dict[str, Any]]:
+    taxonomy = load_json_object(taxonomy_path)
+    aliases_by_tag = taxonomy.get("aliases", {})
+    rules: list[dict[str, Any]] = []
+    for group in taxonomy.get("groups", []):
+        if not isinstance(group, dict):
+            continue
+        products = [str(product) for product in group.get("products", []) if str(product).strip()]
+        for tag in group.get("tags", []):
+            tag_text = str(tag).strip()
+            if not tag_text:
+                continue
+            aliases = [tag_text, *[str(alias) for alias in aliases_by_tag.get(tag_text, [])]]
+            rules.append(
+                {
+                    "name": tag_text,
+                    "group_id": str(group.get("id") or ""),
+                    "group_title": str(group.get("title") or group.get("id") or ""),
+                    "products": products,
+                    "aliases": list(dict.fromkeys(alias for alias in aliases if alias.strip())),
+                }
+            )
+    return rules
+
+
+def load_module_rules(taxonomy_path: Path) -> list[dict[str, Any]]:
+    taxonomy = load_json_object(taxonomy_path)
+    modules: list[dict[str, Any]] = []
+    for item in taxonomy.get("entities", []):
+        if not isinstance(item, dict):
+            continue
+        canonical = str(item.get("canonical") or "").strip()
+        module_code = str(item.get("module_code") or "").strip()
+        product_family = str(item.get("product_family") or "").strip()
+        aliases = unique_texts(
+            [
+                canonical,
+                module_code,
+                item.get("article_numbers", []),
+                item.get("aliases", []),
+                item.get("weak_aliases", []),
+                generated_module_aliases(product_family, module_code),
+            ]
+        )
+        alias_keys = sorted(
+            {normalize_compact_text(alias) for alias in aliases if len(normalize_compact_text(alias)) >= 4},
+            key=len,
+            reverse=True,
+        )
+        if canonical and alias_keys:
+            modules.append(
+                {
+                    "canonical": canonical,
+                    "product_family": product_family,
+                    "module_code": module_code,
+                    "function": str(item.get("function") or "").strip(),
+                    "russian_name": str(item.get("russian_name") or "").strip(),
+                    "confidence": str(item.get("confidence") or "").strip(),
+                    "alias_keys": alias_keys,
+                }
+            )
+    return modules
+
+
+def generated_module_aliases(product_family: str, module_code: str) -> list[str]:
+    aliases: list[str] = []
+    family_short = ""
+    family_match = re.search(r"\b(R\d{3}S?)\b", product_family, flags=re.IGNORECASE)
+    if family_match:
+        family_short = family_match.group(1).upper()
+
+    parts = re.findall(r"[A-Za-z]+|\d+", module_code)
+    if len(parts) >= 3:
+        prefix = parts[0].upper()
+        middle = parts[1]
+        suffix = parts[2]
+        aliases.extend([f"{prefix}{middle}{suffix}", f"{prefix}{middle} {suffix}", f"{prefix} {middle}{suffix}"])
+        if family_short:
+            aliases.extend(
+                [
+                    f"{family_short} {prefix}{middle}{suffix}",
+                    f"{family_short} {prefix}{middle} {suffix}",
+                    f"{family_short} {prefix} {middle}{suffix}",
+                ]
+            )
+        if len(middle) == 2:
+            aliases.extend([f"{prefix}0{middle}{suffix}", f"{prefix}0{middle} {suffix}"])
+            if family_short:
+                aliases.extend([f"{family_short} {prefix}0{middle}{suffix}", f"{family_short} {prefix}0{middle} {suffix}"])
+        if middle == "00":
+            aliases.extend([f"{prefix} {suffix}", f"{prefix}{suffix}", f"{prefix}-{suffix}", f"{prefix}_{suffix}"])
+            if family_short:
+                aliases.extend(
+                    [f"{family_short} {prefix} {suffix}", f"{family_short} {prefix}{suffix}", f"{family_short}-{prefix}-{suffix}"]
+                )
+    return aliases
+
+
+def file_search_text(items: list[dict[str, Any]]) -> str:
+    parts: list[str] = []
+    for item in items:
+        metadata = item.get("metadata", {}) if isinstance(item.get("metadata"), dict) else {}
+        parts.extend(
+            unique_texts(
+                [
+                    metadata.get("page_title"),
+                    metadata.get("equipment_type"),
+                    metadata.get("category"),
+                    metadata.get("cf_tip_oborud_reg_name"),
+                    metadata.get("cf_kategoriya_or_name"),
+                    metadata.get("quality_tags"),
+                    metadata.get("llm_quality_tags"),
+                    metadata.get("llm_symptoms"),
+                    metadata.get("llm_solution"),
+                    item.get("page_content"),
+                ]
+            )
+        )
+    return "\n".join(parts)
+
+
+def existing_quality_tags(items: list[dict[str, Any]]) -> list[str]:
+    tags: list[Any] = []
+    for item in items:
+        metadata = item.get("metadata", {}) if isinstance(item.get("metadata"), dict) else {}
+        tags.extend([metadata.get("quality_tags"), metadata.get("llm_quality_tags")])
+    return unique_texts(tags)
+
+
+def deterministic_quality_tags(
+    text: str,
+    items: list[dict[str, Any]],
+    rules: list[dict[str, Any]],
+) -> tuple[list[str], list[str], list[str]]:
+    text_norm = normalize_match_text(text)
+    metadata_values: list[str] = []
+    equipment_codes: set[str] = set()
+    for item in items:
+        metadata = item.get("metadata", {}) if isinstance(item.get("metadata"), dict) else {}
+        metadata_values.extend(unique_texts([metadata.get("equipment_type"), metadata.get("cf_tip_oborud_reg_name")]))
+        code = str(metadata.get("cf_tip_oborud_reg") or "").lower()
+        if code:
+            equipment_codes.add(code)
+
+    matched_group_ids: list[str] = []
+    matched_group_titles: list[str] = []
+    matched_tags: list[str] = []
+    for rule in rules:
+        group_id = rule["group_id"]
+        product_match = any(EQUIPMENT_CODE_GROUPS.get(code) == group_id for code in equipment_codes)
+        if not product_match:
+            product_match = any(contains_term(text_norm, product) for product in rule["products"])
+        if not product_match:
+            product_match = any(contains_term(normalize_match_text(" ".join(metadata_values)), product) for product in rule["products"])
+        if not product_match:
+            continue
+
+        if group_id and group_id not in matched_group_ids:
+            matched_group_ids.append(group_id)
+        if rule["group_title"] and rule["group_title"] not in matched_group_titles:
+            matched_group_titles.append(rule["group_title"])
+        if any(contains_term(text_norm, alias) for alias in rule["aliases"]):
+            matched_tags.append(rule["name"])
+
+    return unique_texts([existing_quality_tags(items), matched_tags]), matched_group_ids, matched_group_titles
+
+
+def deterministic_modules(text: str, module_rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized = normalize_compact_text(text)
+    matched: list[dict[str, Any]] = []
+    occupied: list[tuple[int, int]] = []
+    for module in module_rules:
+        match_span: tuple[int, int] | None = None
+        for alias_key in module["alias_keys"]:
+            start = normalized.find(alias_key)
+            if start < 0:
+                continue
+            end = start + len(alias_key)
+            if any(not (end <= old_start or start >= old_end) for old_start, old_end in occupied):
+                continue
+            match_span = (start, end)
+            break
+        if match_span is None:
+            continue
+        occupied.append(match_span)
+        matched.append(module)
+    return matched
+
+
+def build_file_enrichment(
+    items: list[dict[str, Any]],
+    tag_rules: list[dict[str, Any]],
+    module_rules: list[dict[str, Any]],
+) -> dict[str, Any]:
+    text = file_search_text(items)
+    quality_tags, group_ids, group_titles = deterministic_quality_tags(text, items, tag_rules)
+    modules = deterministic_modules(text, module_rules)
+    return {
+        "quality_tags": quality_tags,
+        "quality_tag_count": len(quality_tags),
+        "ticket_product_groups": group_ids,
+        "ticket_product_group_titles": group_titles,
+        "mentioned_modules": [module["canonical"] for module in modules],
+        "mentioned_module_codes": [module["module_code"] for module in modules if module["module_code"]],
+        "mentioned_module_families": unique_texts(module["product_family"] for module in modules if module["product_family"]),
+        "mentioned_module_functions": unique_texts(module["function"] for module in modules if module["function"]),
+    }
+
+
+def append_enrichment_to_content(content: str, enrichment: dict[str, Any]) -> str:
+    lines: list[str] = []
+    if enrichment.get("quality_tags") and "ТЕГИ КАЧЕСТВА:" not in content:
+        lines.append("ТЕГИ КАЧЕСТВА: " + ", ".join(enrichment["quality_tags"]))
+    if enrichment.get("mentioned_modules") and "НАЙДЕННЫЕ МОДУЛИ:" not in content:
+        lines.append("НАЙДЕННЫЕ МОДУЛИ: " + ", ".join(enrichment["mentioned_modules"]))
+    if not lines:
+        return content
+    return content.rstrip() + "\n\n" + "\n".join(lines)
+
+
+def load_documents_from_file(
+    path: Path,
+    max_doc_chars: int,
+    *,
+    tag_rules: list[dict[str, Any]] | None = None,
+    module_rules: list[dict[str, Any]] | None = None,
+    enrich_metadata: bool = True,
+) -> list[Document]:
     with path.open("r", encoding="utf-8") as file:
         raw_data = json.load(file)
 
@@ -301,6 +597,10 @@ def load_documents_from_file(path: Path, max_doc_chars: int) -> list[Document]:
         items = raw_data
     else:
         raise ValueError("expected JSON object or list")
+
+    enrichment: dict[str, Any] = {}
+    if enrich_metadata:
+        enrichment = build_file_enrichment(items, tag_rules or [], module_rules or [])
 
     docs: list[Document] = []
     for item in items:
@@ -313,8 +613,12 @@ def load_documents_from_file(path: Path, max_doc_chars: int) -> list[Document]:
         if not isinstance(metadata, dict):
             metadata = {}
         metadata = scrub_metadata(dict(metadata))
+        if enrichment:
+            metadata.update(enrichment)
         metadata.setdefault("source_cache_file", path.name)
         scrubbed_content = scrub_pii_text(content.strip())
+        if enrichment:
+            scrubbed_content = append_enrichment_to_content(scrubbed_content, enrichment)
         docs.append(
             Document(
                 page_content=trim_content(scrubbed_content, max_doc_chars),
@@ -381,12 +685,27 @@ def chunks(items: list[Path], size: int) -> Iterable[list[Path]]:
         yield items[index:index + size]
 
 
-def read_batch(files: list[Path], max_doc_chars: int) -> tuple[list[Document], int]:
+def read_batch(
+    files: list[Path],
+    max_doc_chars: int,
+    *,
+    tag_rules: list[dict[str, Any]] | None = None,
+    module_rules: list[dict[str, Any]] | None = None,
+    enrich_metadata: bool = True,
+) -> tuple[list[Document], int]:
     docs: list[Document] = []
     errors = 0
     for path in files:
         try:
-            docs.extend(load_documents_from_file(path, max_doc_chars))
+            docs.extend(
+                load_documents_from_file(
+                    path,
+                    max_doc_chars,
+                    tag_rules=tag_rules,
+                    module_rules=module_rules,
+                    enrich_metadata=enrich_metadata,
+                )
+            )
         except Exception as exc:
             errors += 1
             print(f"Skipping {path.name}: {exc}")
@@ -418,11 +737,30 @@ def main() -> None:
     print(f"Files: {len(files)}")
     print(f"Batch size: {args.batch_size}")
 
+    tag_rules: list[dict[str, Any]] = []
+    module_rules: list[dict[str, Any]] = []
+    enrich_metadata = not args.no_enrich_metadata
+    if enrich_metadata:
+        tag_taxonomy_path = resolve_project_path(args.tag_taxonomy)
+        module_taxonomy_path = resolve_project_path(args.module_taxonomy)
+        tag_rules = quality_tag_rules(tag_taxonomy_path)
+        module_rules = load_module_rules(module_taxonomy_path)
+        print(f"Tag taxonomy: {tag_taxonomy_path} ({len(tag_rules)} rules)")
+        print(f"Module taxonomy: {module_taxonomy_path} ({len(module_rules)} modules)")
+    else:
+        print("Deterministic metadata enrichment: disabled")
+
     if args.dry_run:
         total_docs = 0
         total_errors = 0
         for batch_files in tqdm(list(chunks(files, args.batch_size)), desc="Dry run"):
-            docs, errors = read_batch(batch_files, args.max_doc_chars)
+            docs, errors = read_batch(
+                batch_files,
+                args.max_doc_chars,
+                tag_rules=tag_rules,
+                module_rules=module_rules,
+                enrich_metadata=enrich_metadata,
+            )
             total_docs += len(docs)
             total_errors += errors
         print(f"Dry run complete. Documents: {total_docs}, file errors: {total_errors}")
@@ -470,7 +808,13 @@ def main() -> None:
     total_errors = 0
     batch_files_iter = list(chunks(files, args.batch_size))
     for batch_files in tqdm(batch_files_iter, desc="Indexing batches"):
-        docs, errors = read_batch(batch_files, args.max_doc_chars)
+        docs, errors = read_batch(
+            batch_files,
+            args.max_doc_chars,
+            tag_rules=tag_rules,
+            module_rules=module_rules,
+            enrich_metadata=enrich_metadata,
+        )
         total_errors += errors
         if not docs:
             continue

@@ -78,3 +78,12 @@ src/document_processing/parsers_tickets.py
 CODE_REVIEW.md
 IMPLEMENTATION_SUMMARY.md
 QUICKSTART.md
+
+# Separate projects kept outside the RAG deployment repository
+analytics/
+faq_pipeline/
+course_pipeline/
+log_analysis_pipeline/
+.tmp_logs_analysis/
+*.zip
+tickets_*.csv
