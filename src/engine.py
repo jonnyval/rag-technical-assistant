@@ -29,6 +29,7 @@ from src.context_formatting import (
 from src.evidence_guard import (
     apply_definition_guard,
     apply_entity_citation_guard,
+    apply_response_provenance,
     check_and_format_equipment_mismatch_warning,
     strict_evidence_context,
 )
@@ -190,8 +191,8 @@ class SupportPrivateResponse(BaseModel):
     """Приватная подсказка ИИ для сотрудника техподдержки."""
     user_intent: str = Field(default="", description="Что хочет выяснить или выполнить инженер ТП")
     docs_answer: str = Field(description="Информация из документации. Если прямого решения нет, перечисли релевантные темы.")
-    related_topics: List[str] = Field(default=[], description="Темы из документации, которые относятся к обращению")
-    similar_tickets: List[SimilarTicketSummary] = Field(default=[], description="Похожие обращения из базы тикетов")
+    related_topics: List[str] = Field(default_factory=list, description="Темы из документации, которые относятся к обращению")
+    similar_tickets: List[SimilarTicketSummary] = Field(default_factory=list, description="Похожие обращения из базы тикетов")
     evidence_notes: List[EvidenceNote] = Field(default_factory=list, description="Ключевые тезисы ответа с привязкой к источникам")
     recommended_questions: List[str] = Field(default_factory=list, description="Какие данные стоит уточнить, только если без них нельзя продолжить")
     internal_notes: List[str] = Field(default_factory=list, description="Внутренний SGR-аудит и проверки для инженера техподдержки")
@@ -206,6 +207,11 @@ class SupportPrivateResponse(BaseModel):
 # 🛠 ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # ==========================================
 
+    @field_validator("similar_tickets", "evidence_notes", mode="before")
+    @classmethod
+    def normalize_object_lists(cls, value):
+        """Treat provider JSON null as an empty list for optional structured fields."""
+        return [] if value is None else value
     @field_validator("related_topics", "recommended_questions", "internal_notes", mode="before")
     @classmethod
     def normalize_string_lists(cls, value):
@@ -290,7 +296,7 @@ class RetrievalReflection(BaseModel):
 
 class KeyRotationCallbackHandler(BaseCallbackHandler):
     """Логирует ошибки LLM при ротации API ключей."""
-    
+
     def __init__(self, key_index: int = 0):
         """Запоминает индекс API-ключа, на котором выполняется текущий LLM-вызов."""
 
@@ -326,23 +332,49 @@ class RoundRobinFallbackRunnable(Runnable):
             for offset in range(len(self.runnables))
         ]
 
+    @staticmethod
+    def _failure_policy(error: Exception) -> tuple[bool, float]:
+        """Return whether another credential may help and the per-key cooldown."""
+        message = str(error).lower()
+        permanent_key_or_model_error = any(token in message for token in (
+            "401", "403", "404", "not_found", "permission_denied", "invalid api key", "api key not valid",
+        ))
+        transient_provider_error = any(token in message for token in (
+            "429", "500", "502", "503", "504", "unavailable", "timeout", "timed out", "connection",
+        ))
+        if permanent_key_or_model_error:
+            return True, 15 * 60.0
+        if transient_provider_error:
+            return True, 30.0
+        # Schema, validation and prompt errors are deterministic for every key.
+        return False, 0.0
+
     def invoke(self, input: Any, config: Optional[dict] = None, **kwargs: Any) -> Any:
-        """Выполняет запрос через очередной ключ и переключается дальше при сбое."""
+        """Try healthy credentials only; do not multiply deterministic failures."""
         last_error: Optional[Exception] = None
+        now = time.monotonic()
         for key_index, runnable in self._ordered_runnables():
+            retry_after = getattr(self, "_retry_after", {}).get(key_index, 0.0)
+            if retry_after > now:
+                log.debug("%s: key #%s is in cooldown for %.0fs", self.label, key_index, retry_after - now)
+                continue
             try:
-                log.debug("%s: попытка через ключ #%s", self.label, key_index)
+                log.debug("%s: attempt via key #%s", self.label, key_index)
                 return runnable.invoke(input, config=config, **kwargs)
             except Exception as error:
                 last_error = error
-                log.warning("%s: ключ #%s не сработал, пробую следующий: %s", self.label, key_index, error)
+                should_failover, cooldown = self._failure_policy(error)
+                if cooldown:
+                    if not hasattr(self, "_retry_after"):
+                        self._retry_after = {}
+                    self._retry_after[key_index] = time.monotonic() + cooldown
+                if not should_failover:
+                    log.error("%s: deterministic failure on key #%s; fallback skipped: %s", self.label, key_index, error)
+                    raise
+                log.warning("%s: key #%s failed; trying next healthy key: %s", self.label, key_index, error)
 
-        raise last_error or RuntimeError(f"{self.label}: no runnable succeeded")
+        raise last_error or RuntimeError(f"{self.label}: all credentials are temporarily unavailable")
 
-
-# ==========================================
-# 🚀 ЯДРО RAG-СИСТЕМЫ
-# ==========================================
 
 class RAGEngine:
     """Оркестратор RAG системы: поиск по двум БД + LLM + SGR цепочка.
@@ -443,10 +475,10 @@ class RAGEngine:
             llm_candidates = []
             if settings.active_llm == "gemini":
                 log.debug(f"  Ключей Gemini: {len(settings.google_api_keys)}")
-                
+
                 if not settings.google_api_keys:
                     raise ValueError("❌ GOOGLE_API_KEYS не установлена в .env!")
-                
+
                 is_gemma4 = settings.llm_model_name.lower().startswith("gemma-4-")
                 gemini_request_kwargs = {
                     "timeout": 90 if is_gemma4 else settings.llm_timeout,
@@ -469,7 +501,7 @@ class RAGEngine:
                     )
                     for i, k in enumerate(settings.google_api_keys)
                 ]
-                
+
                 llm_candidates = llms
                 if len(llms) > 1:
                     # RoundRobinFallbackRunnable handles per-request fallback.
@@ -500,10 +532,10 @@ class RAGEngine:
 
             else:  # GROQ
                 log.debug(f"  Ключей GROQ: {len(settings.groq_api_keys)}")
-                
+
                 if not settings.groq_api_keys:
                     raise ValueError("❌ GROQ_API_KEYS не установлена в .env!")
-                
+
                 llms = [
                     ChatOpenAI(
                         base_url="https://api.groq.com/openai/v1",
@@ -516,7 +548,7 @@ class RAGEngine:
                     )
                     for i, k in enumerate(settings.groq_api_keys)
                 ]
-                
+
                 llm_candidates = llms
                 if len(llms) > 1:
                     # RoundRobinFallbackRunnable handles per-request fallback.
@@ -598,29 +630,16 @@ class RAGEngine:
 Ответ должен помогать инженеру проверить гипотезу, а не звучать как уверенное решение без доказательств.
 
 СТРОГИЙ РЕЖИМ ДОКАЗАТЕЛЬНОСТИ:
-- Утверждение считается подтвержденным только если оно прямо следует из текста фрагмента, помеченного тем же ID источника, например [D1] или [T1].
-- Список "Источники документации" сам по себе не является доказательством. Доказательством является только текст в блоках "Официальная документация", где в заголовке стоит тот же ID.
-- Запрещено выводить значение аббревиатуры, суффикса, буквы в маркировке или параметра по косвенным совпадениям. Для вопросов "что означает", "что значит", "расшифруй", "зачем буква/суффикс" нужен прямой текст источника с определением или явным описанием назначения.
-- Если прямого определения нет, пиши: "В найденных источниках прямого определения не найдено"; дальше можно перечислить только наблюдения из источников как наблюдения, а не как расшифровку.
-- Не используй формулировки "означает", "обозначает", "указывает на", если источник не говорит это явно. Используй "в найденных фрагментах встречается рядом с..." только в разделе гипотез.
-- Не объединяй две фразы из разных мест источника в новый вывод, если такая связь не указана в источнике явно.
-- Если один источник противоречит другому или источник говорит "нет поддержки", не превращай это в правило о значении маркировки.
+- Каждый технический факт связывай с конкретным фрагментом [D…] или [T…]. Если прямого подтверждения нет, кратко сообщи об этом.
+- Для вопросов «что это», «что означает», «расшифруй» давай определение только при прямом определении в источнике. Иначе напиши: «В найденных источниках прямого определения <термин> не найдено».
+- Не выводи новое правило из разрозненных фрагментов и не переносись между разными моделями/сериями без явной совместимости в источнике.
 
-Формат draft_private_comment — это ответ для коллеги-инженера ТП, который сам разбирается в вопросе. Не пиши про «клиента», если это прямо не следует из запроса.
-
-По умолчанию ответ короткий и прикладной:
-- Сначала определи тип запроса. Нумерованную последовательность действий давай только если пользователь явно спрашивает «как», «порядок», «процедура», «настройка», «сброс», «войти/выйти» или просит выполнить действие.
-- На справочный вопрос «что это», «что такое», «для чего», «какие возможности» сначала дай прямое определение или перечень возможностей в 1–3 коротких абзацах. Не превращай такой ответ в инструкцию по поиску, подключению, проверке или настройке, если пользователь этого не просил.
-- Если для справочного вопроса прямого определения в извлечённых фрагментах нет, напиши: «В найденных источниках прямого определения <термин из вопроса> не найдено». Можно добавить только явно подтверждённые наблюдения. Не компенсируй отсутствие определения общими советами вроде «откройте проект», «проверьте список библиотек» или «уточните у разработчика».
-- Для процедуры дай все подтвержденные шаги в правильном порядке (обычно 3–10); для справки — 1–3 коротких абзаца.
-- Если в документации есть конкретная последовательность действий, команды, положения переключателей, сроки или проверки результата, перенеси их в draft_private_comment. Не заменяй такую последовательность фразой «следуйте процедуре из документации».
-- Добавь один блок «Важно:» только при существенном риске, необратимом действии, несовпадении модели или отсутствии прямого подтверждения.
-- Один уточняющий вопрос допустим только если без него нельзя дать безопасное действие. Не создавай список уточнений «на всякий случай».
-- Ставь метку источника [D1], [T1] рядом с конкретным фактом или шагом. Не пересказывай источник вторым слоем.
-- Не используй шаблонные заголовки «Что известно», «Наиболее вероятно», «Проверить сначала», «Гипотезы и ограничения», «Что запросить». Не описывай собственное рассуждение.
-- Не добавляй тикеты в ответ, если они не дают дополнительного практического действия. Опыт тикета не заменяет инструкцию из документации.
-- Если прямой инструкции нет, скажи об этом одной фразой и отдели подтвержденное от гипотезы.
-- Не добавляй универсальные советы ради объема.
+ФОРМАТ ОТВЕТА:
+- Сначала определи тип вопроса. На справочный вопрос ответь кратким определением или перечнем возможностей. Нумерованные шаги используй только для явно запрошенной процедуры.
+- Для подтверждённой процедуры передай все найденные шаги в исходном порядке; не заменяй их общей ссылкой на документацию.
+- Ставь [D…]/[T…] рядом с фактом или шагом. Похожие тикеты описывай только как исторический опыт, а не как инструкцию для текущего случая.
+- Если данных не хватает, назови ровно недостающий факт. Пустые поля JSON возвращай как [] и не заполняй их шаблонными вопросами или проверками.
+- Ответ предназначен коллеге-инженеру ТП. Пиши по-русски, коротко и прикладно; не описывай собственное рассуждение.
 Правила для similar_tickets:
 - Добавляй тикет только если он реально помогает текущему обращению.
 - relevance_reason обязателен: укажи конкретное совпадение симптома, оборудования, версии, ошибки, лога или действия.
@@ -1003,6 +1022,9 @@ User question:
                 )
 
 
+            # Remove incompatible product-family sources before they reach the LLM. The guard remains as a diagnostic fallback.
+            docs = self._filter_wiki_docs_by_requested_product(query, detected_modules, docs)
+            tickets = self._filter_wiki_docs_by_requested_product(query, detected_modules, tickets)
             doc_sources = source_references(docs, prefix="D")
             ticket_sources = source_references(tickets, ticket_only=True, prefix="T")
             docs_context = format_docs(
@@ -1036,6 +1058,9 @@ User question:
                 "ticket_sources_context": format_source_references(ticket_sources),
             })
             response = apply_definition_guard(response, query, docs_context, doc_sources)
+            response, doc_sources, ticket_sources = apply_response_provenance(
+                response, doc_sources, ticket_sources
+            )
             if detected_modules:
                 response.docs_answer = ensure_module_block(response.docs_answer, detected_modules)
                 response.draft_private_comment = ensure_module_block(response.draft_private_comment, detected_modules)
@@ -1139,73 +1164,6 @@ User question:
             final_answer=support_response.draft_private_comment,
             relevant_images=[],
         )
-
-        # === ВАЛИДАЦИЯ ===
-        if not query:
-            raise ValueError("query не может быть пустым")
-        if not isinstance(query, str):
-            raise ValueError(f"query должен быть строкой, получен {type(query).__name__}")
-        query = query.strip()
-        if not query:
-            raise ValueError("query содержит только пробелы")
-
-        # === ФИЛЬТР ===
-        if not equipment_filter:
-            self.retriever.equipment_filter = ["Все"]
-            log.debug("Фильтр оборудования: ВСЕ")
-        else:
-            if not isinstance(equipment_filter, list):
-                raise ValueError(f"equipment_filter должен быть списком, получен {type(equipment_filter).__name__}")
-            self.retriever.equipment_filter = equipment_filter
-            log.debug(f"Фильтр оборудования: {', '.join(equipment_filter)}")
-
-        # === ОБРАБОТКА ===
-        start = time.perf_counter()
-        self._last_docs = []
-
-        try:
-            log.info(f"🔄 Обработка запроса ({len(query)} символов)")
-            log.debug(f"   Запрос: {query[:100]}{'...' if len(query) > 100 else ''}")
-
-            # Поиск документов — сохраняем для UI и передаём в цепочку
-            self._last_docs = self.retriever.invoke(query)
-
-            # Генерация ответа (retriever внутри sgr_chain вызовется повторно —
-            # это нормально, LangChain chain этого требует)
-            response = self.sgr_chain.invoke(query)
-
-            elapsed = time.perf_counter() - start
-            log.info(
-                f"✅ Ответ сгенерирован за {elapsed:.2f}с "
-                f"| документов: {len(self._last_docs)} "
-                f"| фактов: {len(response.extracted_facts)}"
-            )
-
-            log_query_audit(
-                query=query,
-                equipment_filter=equipment_filter,
-                retrieved_docs=self._last_docs,
-                response=response,
-                elapsed_sec=elapsed,
-            )
-
-            return response
-
-        except Exception as e:
-            elapsed = time.perf_counter() - start
-            log.error(f"❌ Ошибка при генерации ответа: {e}", exc_info=True)
-
-            log_query_audit(
-                query=query,
-                equipment_filter=equipment_filter,
-                retrieved_docs=self._last_docs,
-                response=None,
-                elapsed_sec=elapsed,
-                extra={"error": str(e)},
-            )
-
-            raise RuntimeError(f"Failed to process query: {str(e)}") from e
-
 
     def _normalize_followup_queries(self, queries: Any, already_tried: set, limit: int) -> List[str]:
         """Return short unique follow-up retrieval queries that were not tried yet."""
@@ -1372,6 +1330,14 @@ User question:
 
         for round_index in range(WIKI_ITERATIVE_MAX_ROUNDS):
             try:
+                # Remove incompatible product-family sources before they reach the LLM. The guard remains as a diagnostic fallback.
+
+                docs = self._filter_wiki_docs_by_requested_product(latest_query, detected_modules, docs)
+
+                tickets = self._filter_wiki_docs_by_requested_product(latest_query, detected_modules, tickets)
+
+
+
                 doc_sources = source_references(docs, prefix="D")
                 ticket_sources = source_references(tickets, ticket_only=True, prefix="T")
                 docs_context = format_docs(
@@ -1582,6 +1548,18 @@ User question:
                     tickets=tickets,
                 )
                 docs = self._filter_wiki_docs_by_requested_product(latest_query, detected_modules, docs)
+
+            # Remove incompatible product-family sources before they reach the LLM. The guard remains as a diagnostic fallback.
+
+
+            docs = self._filter_wiki_docs_by_requested_product(latest_query, detected_modules, docs)
+
+
+            tickets = self._filter_wiki_docs_by_requested_product(latest_query, detected_modules, tickets)
+
+
+
+
 
             doc_sources = source_references(docs, prefix="D")
             ticket_sources = source_references(tickets, ticket_only=True, prefix="T")

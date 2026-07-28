@@ -155,7 +155,7 @@ def apply_definition_guard(
 
 def check_and_format_equipment_mismatch_warning(query: str, doc_sources: List[SourceReference]) -> str:
     """Глобальная проверка несовпадения запрошенной серии оборудования и найденных источников.
-    
+
     Универсально работает для любых серий и моделей (R500, R500S, R400, R200, AstraRegul и т.д.).
     """
     if not query or not doc_sources:
@@ -235,3 +235,83 @@ def apply_entity_citation_guard(answer: str, query: str, doc_sources: List[Sourc
 
     return answer
 
+
+
+def _source_ids_used_in_response(response: Any) -> set[str]:
+    """Return only source labels explicitly referenced by the generated response."""
+    cited: set[str] = set()
+    for field_name in ("docs_answer", "draft_private_comment", "final_answer"):
+        text = str(getattr(response, field_name, "") or "")
+        cited.update(re.findall(r"\[([DT]\d+)\]", text, flags=re.IGNORECASE))
+    for note in getattr(response, "evidence_notes", None) or []:
+        cited.update(str(item).upper() for item in (getattr(note, "source_ids", None) or []))
+    return {source_id.upper() for source_id in cited}
+
+
+def _remove_unknown_source_labels(response: Any, allowed_ids: set[str]) -> None:
+    """Remove fabricated [D..]/[T..] labels rather than presenting them as evidence."""
+    def replace_label(match: re.Match) -> str:
+        source_id = match.group(1).upper()
+        if source_id in allowed_ids:
+            return match.group(0)
+        log.warning("EvidenceGuard: removed unavailable source label [%s]", source_id)
+        return ""
+
+    for field_name in ("docs_answer", "draft_private_comment", "final_answer"):
+        if not hasattr(response, field_name):
+            continue
+        text = str(getattr(response, field_name, "") or "")
+        setattr(response, field_name, re.sub(r"\[([DT]\d+)\]", replace_label, text, flags=re.IGNORECASE))
+
+
+def apply_response_provenance(
+    response: Any,
+    doc_sources: List[SourceReference],
+    ticket_sources: List[SourceReference],
+) -> tuple[Any, List[SourceReference], List[SourceReference]]:
+    """Validate LLM-provided references and expose only sources actually cited.
+
+    Prompt instructions are advisory. This guard ensures source IDs and ticket IDs in
+    structured output originate from the retrieval result before API/UI rendering.
+    """
+    allowed_docs = {source.source_id.upper(): source for source in doc_sources}
+    allowed_tickets = {source.source_id.upper(): source for source in ticket_sources}
+    allowed_ids = set(allowed_docs) | set(allowed_tickets)
+    _remove_unknown_source_labels(response, allowed_ids)
+
+    valid_notes = []
+    for note in getattr(response, "evidence_notes", None) or []:
+        source_ids = [str(source_id).upper() for source_id in (getattr(note, "source_ids", None) or [])]
+        if not source_ids or any(source_id not in allowed_ids for source_id in source_ids):
+            log.warning("EvidenceGuard: dropped evidence note with unavailable source IDs: %s", source_ids)
+            continue
+        note.source_ids = source_ids
+        valid_notes.append(note)
+    if hasattr(response, "evidence_notes"):
+        response.evidence_notes = valid_notes
+
+    allowed_ticket_keys = {
+        str(value).strip()
+        for source in ticket_sources
+        for value in (source.title, source.source_file)
+        if str(value).strip()
+    }
+    valid_tickets = []
+    for ticket in getattr(response, "similar_tickets", None) or []:
+        ticket_keys = {str(getattr(ticket, "ticket_id", "")).strip(), str(getattr(ticket, "source_file", "")).strip()}
+        if ticket_keys & allowed_ticket_keys:
+            valid_tickets.append(ticket)
+        else:
+            log.warning("EvidenceGuard: dropped ticket absent from retrieval: %s", ticket_keys)
+    if hasattr(response, "similar_tickets"):
+        response.similar_tickets = valid_tickets
+
+    cited_ids = _source_ids_used_in_response(response)
+    for ticket in valid_tickets:
+        for source in ticket_sources:
+            if str(getattr(ticket, "ticket_id", "")).strip() in {source.title, source.source_file}:
+                cited_ids.add(source.source_id.upper())
+
+    used_docs = [source for source in doc_sources if source.source_id.upper() in cited_ids]
+    used_tickets = [source for source in ticket_sources if source.source_id.upper() in cited_ids]
+    return response, used_docs, used_tickets
