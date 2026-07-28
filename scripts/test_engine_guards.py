@@ -47,6 +47,12 @@ def test_provenance_removes_unknown_sources() -> None:
     assert [source.source_id for source in used_tickets] == ["T1"]
 
 
+
+def test_reference_query_skips_ticket_mode() -> None:
+    query = "что за библиотека sysmem?"
+    assert RAGEngine._is_reference_query(query)
+    assert not RAGEngine._is_incident_query(query)
+
 def test_retry_policy_does_not_repeat_schema_errors() -> None:
     assert RoundRobinFallbackRunnable._failure_policy(RuntimeError("503 UNAVAILABLE")) == (True, 30.0)
     assert RoundRobinFallbackRunnable._failure_policy(RuntimeError("404 NOT_FOUND")) == (True, 900.0)
@@ -56,5 +62,6 @@ def test_retry_policy_does_not_repeat_schema_errors() -> None:
 if __name__ == "__main__":
     test_product_filter_keeps_exact_series()
     test_provenance_removes_unknown_sources()
+    test_reference_query_skips_ticket_mode()
     test_retry_policy_does_not_repeat_schema_errors()
     print("Engine guard regression checks: OK")

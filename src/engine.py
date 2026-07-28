@@ -631,7 +631,8 @@ class RAGEngine:
 
 СТРОГИЙ РЕЖИМ ДОКАЗАТЕЛЬНОСТИ:
 - Каждый технический факт связывай с конкретным фрагментом [D…] или [T…]. Если прямого подтверждения нет, кратко сообщи об этом.
-- Для вопросов «что это», «что означает», «расшифруй» давай определение только при прямом определении в источнике. Иначе напиши: «В найденных источниках прямого определения <термин> не найдено».
+- Для вопросов «что это», «что за библиотека», «что означает», «расшифруй» сначала дай определение из источника. Если прямого определения нет, явно отдели это: «В найденной документации RegLab прямого описания <термин> не найдено».
+- После такой оговорки можно добавить 1–2 предложения с пометкой «Общее техническое пояснение (проверьте версию и среду):» — только для устойчивого общего назначения термина. Не выдавай в этом блоке точные API, пути меню, совместимость версий, параметры или последовательность действий.
 - Не выводи новое правило из разрозненных фрагментов и не переносись между разными моделями/сериями без явной совместимости в источнике.
 
 ФОРМАТ ОТВЕТА:
@@ -908,6 +909,15 @@ User question:
         return any(marker in normalized for marker in markers)
 
     @staticmethod
+    def _is_reference_query(query: str) -> bool:
+        """Whether the user asks for a definition/capability rather than incident handling."""
+        normalized = (query or "").lower().replace("ё", "е")
+        markers = (
+            "что это", "что такое", "что за", "что означает", "что значит",
+            "для чего", "назначение", "какие возможности", "расшифруй",
+        )
+        return any(marker in normalized for marker in markers)
+    @staticmethod
     def _adaptive_ticket_results_are_weak(tickets: List[Any]) -> bool:
         """Use the expensive top-80 rerank only when the first ticket pass is weak."""
         if len(tickets) < 3:
@@ -1020,7 +1030,10 @@ User question:
                     query=query,
                     limit=4 if (ticket_quality_mode or adaptive_mode) else 2,
                 )
-
+                if self._is_reference_query(query) and not self._is_incident_query(query):
+                    # A similarly named API in a historical case is not a library definition.
+                    log.info("Ticket context skipped for reference query without incident markers")
+                    tickets = []
 
             # Remove incompatible product-family sources before they reach the LLM. The guard remains as a diagnostic fallback.
             docs = self._filter_wiki_docs_by_requested_product(query, detected_modules, docs)
