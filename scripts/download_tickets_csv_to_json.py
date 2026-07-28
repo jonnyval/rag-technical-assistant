@@ -21,7 +21,7 @@ from src.logger import log
 load_dotenv()
 
 
-DEFAULT_CSV_FILE_PATH = "tickets_04_06_26.csv"
+DEFAULT_CSV_FILE_PATH = "Выгрузка обращений (5).csv"
 DEFAULT_OUTPUT_BASE_DIR = Path("data/source_docs/docs_json")
 DEFAULT_OUTPUT_DIR_PREFIX = "tickets"
 SUPPORT_API_URL = "https://support.prosyst.ru/api/"
@@ -373,6 +373,7 @@ def build_id_mapping(
     mapping: dict[str, Any] = {}
     owner_mapping: dict[str, Any] = {}
     offset = 0
+    previous_found = -1
 
     while needed_rl_ids - set(mapping):
         payload = {
@@ -406,6 +407,18 @@ def build_id_mapping(
             f"Справочник: найдено {len(mapping)}/{len(needed_rl_ids)}, "
             f"offset={offset}, batch={len(batch)}"
         )
+        if len(mapping) == previous_found:
+            missing_ids = sorted(needed_rl_ids - set(mapping))
+            preview = ", ".join(missing_ids[:10])
+            if len(missing_ids) > 10:
+                preview += f", ... (+{len(missing_ids) - 10})"
+            log.warning(
+                "Поиск internal_id остановлен: новых совпадений от API нет. "
+                f"Не найдены RL-ID: {preview}"
+            )
+            break
+
+        previous_found = len(mapping)
         offset += page_size
 
     log.info(f"Справочник готов. Найдено {len(mapping)} тикетов из {len(needed_rl_ids)}.")
@@ -607,3 +620,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

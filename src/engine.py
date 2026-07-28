@@ -1,3 +1,4 @@
+import re
 import time
 import warnings
 from threading import Lock
@@ -25,7 +26,12 @@ from src.context_formatting import (
     is_ticket_document,
     source_references,
 )
-from src.evidence_guard import apply_definition_guard, strict_evidence_context
+from src.evidence_guard import (
+    apply_definition_guard,
+    apply_entity_citation_guard,
+    check_and_format_equipment_mismatch_warning,
+    strict_evidence_context,
+)
 from src.module_detection import (
     build_module_enriched_query,
     detect_modules_in_query,
@@ -46,10 +52,20 @@ FUNCTION_CALLING_MODELS = {
     "gemma2-9b-it",
 }
 
-SUPPORT_DOCS_MAX_CHARS = 5200
+SUPPORT_DOCS_MAX_CHARS = 7000
 SUPPORT_TICKETS_MAX_CHARS = 2600
-SUPPORT_DOC_MAX_CHARS = 1800
+SUPPORT_DOC_MAX_CHARS = 2800
 SUPPORT_TICKET_MAX_CHARS = 1200
+WIKI_DOCS_MAX_CHARS = 9000
+WIKI_TICKETS_MAX_CHARS = 4200
+WIKI_DOC_MAX_CHARS = 2600
+WIKI_TICKET_MAX_CHARS = 1600
+WIKI_ITERATIVE_MAX_ROUNDS = 1
+WIKI_ITERATIVE_MAX_FOLLOWUP_QUERIES = 2
+WIKI_REFLECTION_DOCS_MAX_CHARS = 3200
+WIKI_REFLECTION_TICKETS_MAX_CHARS = 1400
+WIKI_ITERATIVE_SKIP_MIN_DOCS = 2
+WIKI_ITERATIVE_SKIP_MIN_DOC_CHARS = 2200
 
 RAG_PROFILES: Dict[str, Dict[str, Any]] = {
     "fast": {
@@ -60,6 +76,13 @@ RAG_PROFILES: Dict[str, Dict[str, Any]] = {
         "use_litm": False,
     },
     "deep": {
+        "use_reranker": True,
+        "top_k_retrieval": 24,
+        "top_k_final": 4,
+        "rerank_threshold": 0.05,
+        "use_litm": True,
+    },
+    "adaptive": {
         "use_reranker": True,
         "top_k_retrieval": 24,
         "top_k_final": 4,
@@ -165,13 +188,13 @@ class EvidenceNote(BaseModel):
 
 class SupportPrivateResponse(BaseModel):
     """Приватная подсказка ИИ для сотрудника техподдержки."""
-    user_intent: str = Field(default="", description="Что клиент, вероятно, хочет решить")
+    user_intent: str = Field(default="", description="Что хочет выяснить или выполнить инженер ТП")
     docs_answer: str = Field(description="Информация из документации. Если прямого решения нет, перечисли релевантные темы.")
     related_topics: List[str] = Field(default=[], description="Темы из документации, которые относятся к обращению")
     similar_tickets: List[SimilarTicketSummary] = Field(default=[], description="Похожие обращения из базы тикетов")
     evidence_notes: List[EvidenceNote] = Field(default_factory=list, description="Ключевые тезисы ответа с привязкой к источникам")
-    recommended_questions: List[str] = Field(default_factory=list, description="Что стоит уточнить у клиента или запросить у него")
-    internal_notes: List[str] = Field(default_factory=list, description="Внутренние заметки и проверки для инженера техподдержки")
+    recommended_questions: List[str] = Field(default_factory=list, description="Какие данные стоит уточнить, только если без них нельзя продолжить")
+    internal_notes: List[str] = Field(default_factory=list, description="Внутренний SGR-аудит и проверки для инженера техподдержки")
     missing_context: str = Field(default="Не указано", description="Каких данных не хватает для уверенного ответа")
     draft_private_comment: str = Field(description="Готовый приватный комментарий для сотрудника ТП в Markdown")
     confidence: str = Field(default="medium", description="low | medium | high")
@@ -196,6 +219,74 @@ class SupportPrivateResponse(BaseModel):
             return [str(item) for item in value if item is not None and str(item).strip()]
         return [str(value)]
 
+
+class WikiChatResponse(BaseModel):
+    """Wiki-style chat response: documentation first, tickets as historical cases only."""
+
+    user_intent: str = Field(default="", description="Short Russian restatement of what the user wants to know")
+    docs_answer: str = Field(default="", description="Russian summary of all relevant official documentation facts with [D...] citations")
+    related_topics: List[str] = Field(default_factory=list, description="Related documentation topics or sections, in Russian")
+    similar_tickets: List[SimilarTicketSummary] = Field(default_factory=list, description="Similar historical tickets, not instructions for the current request")
+    evidence_notes: List[EvidenceNote] = Field(default_factory=list, description="Verifiable claims with source_ids from documentation or ticket sources")
+    missing_context: str = Field(default="", description="Russian description of direct information not found in retrieved sources")
+    source_limitations: List[str] = Field(default_factory=list, description="Weak matches, model/version mismatches, or missing direct evidence, in Russian")
+    final_answer: str = Field(description="Final Russian Markdown wiki answer for the user")
+    confidence: str = Field(default="medium", description="low | medium | high")
+    doc_sources: List[SourceReference] = Field(default_factory=list, description="Documentation sources attached by code after retrieval")
+    ticket_sources: List[SourceReference] = Field(default_factory=list, description="Ticket sources attached by code after retrieval")
+
+    @field_validator("related_topics", "source_limitations", mode="before")
+    @classmethod
+    def normalize_string_lists(cls, value):
+        """Allow LLMs to return list fields either as a list or as a single string."""
+        if value is None:
+            return []
+        if isinstance(value, str):
+            value = value.strip()
+            return [value] if value else []
+        if isinstance(value, list):
+            return [str(item) for item in value if item is not None and str(item).strip()]
+        return [str(value)]
+
+
+    @field_validator("user_intent", "docs_answer", "missing_context", "final_answer", "confidence", mode="before")
+    @classmethod
+    def normalize_text_fields(cls, value):
+        """Replace null and non-string scalar values with safe strings."""
+        if value is None:
+            return ""
+        return str(value)
+
+
+class RetrievalReflection(BaseModel):
+    """Internal decision about whether wiki retrieval needs more focused searches."""
+
+    enough_context: bool = Field(default=True, description="True when current retrieved docs/tickets are enough for a cited wiki answer")
+    missing_facts: List[str] = Field(default_factory=list, description="Missing facts that should be searched for before answering")
+    followup_doc_queries: List[str] = Field(default_factory=list, description="Additional documentation search queries, most important first")
+    followup_ticket_queries: List[str] = Field(default_factory=list, description="Additional historical ticket search queries, most important first")
+    product_line_filter: str = Field(default="", description="Exact product/model constraint to preserve, for example R500 or R500S")
+    source_risks: List[str] = Field(default_factory=list, description="Warnings about weak, mixed, or mismatched retrieved sources")
+
+    @field_validator("missing_facts", "followup_doc_queries", "followup_ticket_queries", "source_risks", mode="before")
+    @classmethod
+    def normalize_string_lists(cls, value):
+        if value is None:
+            return []
+        if isinstance(value, str):
+            value = value.strip()
+            return [value] if value else []
+        if isinstance(value, list):
+            normalized = []
+            seen = set()
+            for item in value:
+                item_text = str(item).strip()
+                if not item_text or item_text in seen:
+                    continue
+                seen.add(item_text)
+                normalized.append(item_text)
+            return normalized
+        return [str(value)]
 
 class KeyRotationCallbackHandler(BaseCallbackHandler):
     """Логирует ошибки LLM при ротации API ключей."""
@@ -263,13 +354,21 @@ class RAGEngine:
                      повторного поиска)
     """
 
-    def __init__(self, profile: str = "deep"):
+    def __init__(
+        self,
+        profile: str = "deep",
+        *,
+        shared_embeddings: Any | None = None,
+        shared_reranker: Any | None = None,
+    ):
         """Собирает retriever, LLM-цепочки и служебное состояние RAG-движка."""
 
         try:
             log.info("🚀 Инициализация RAGEngine...")
             self.profile = profile if profile in RAG_PROFILES else "deep"
             self.profile_config = RAG_PROFILES[self.profile]
+            self.dense_embeddings = shared_embeddings
+            self.rerank_model = shared_reranker
             log.info(
                 "RAGEngine initialization: profile=%s top_k=%s/%s reranker=%s",
                 self.profile,
@@ -277,7 +376,7 @@ class RAGEngine:
                 self.profile_config["top_k_final"],
                 self.profile_config["use_reranker"],
             )
-            self.retriever, self.sgr_chain, self.support_chain = self._build_pipeline()
+            self.retriever, self.sgr_chain, self.support_chain, self.chat_chain, self.retrieval_reflection_chain = self._build_pipeline()
             self._last_docs: List = []
             log.info("✅ RAGEngine успешно инициализирован.")
         except Exception as e:
@@ -292,29 +391,39 @@ class RAGEngine:
         """
         try:
             # === 1. ЭМБЕДДИНГИ ===
-            log.info(f"📥 Загрузка эмбеддингов: {settings.embedding_model_name}...")
-            dense_embeddings = HuggingFaceEmbeddings(
-                model_name=settings.embedding_model_name,
-                model_kwargs={'device': settings.device},
-                encode_kwargs={
-                    'normalize_embeddings': True,
-                    'prompt': 'Instruct: Retrieve relevant technical documentation passage to answer the query.\nQuery: ',
-                }
-            )
+            dense_embeddings = self.dense_embeddings
+            if dense_embeddings is None:
+                log.info(f"📥 Загрузка эмбеддингов: {settings.embedding_model_name}...")
+                dense_embeddings = HuggingFaceEmbeddings(
+                    model_name=settings.embedding_model_name,
+                    model_kwargs={'device': settings.device},
+                    encode_kwargs={
+                        'normalize_embeddings': True,
+                        'prompt': 'Instruct: Retrieve relevant technical documentation passage to answer the query.\nQuery: ',
+                    }
+                )
+            else:
+                log.info("♻️ Переиспользование уже загруженной embedding-модели")
+            self.dense_embeddings = dense_embeddings
             log.debug("✓ Dense embeddings загружены")
 
             # === 2. РЕРАНКЕР (опционально) ===
-            rerank_model = None
+            rerank_model = self.rerank_model
             if self.profile_config["use_reranker"]:
-                log.info(f"📊 Загрузка реранкера: {settings.reranker_model_name}...")
-                rerank_model = CrossEncoder(
-                    settings.reranker_model_name,
-                    device=settings.device,
-                    trust_remote_code=True
-                )
+                if rerank_model is None:
+                    log.info(f"📊 Загрузка реранкера: {settings.reranker_model_name}...")
+                    rerank_model = CrossEncoder(
+                        settings.reranker_model_name,
+                        device=settings.device,
+                        trust_remote_code=True
+                    )
+                else:
+                    log.info("♻️ Переиспользование уже загруженного реранкера")
                 log.debug("✓ Реранкер загружен")
             else:
+                rerank_model = None
                 log.info("⏭️  Реранкер отключён (use_reranker: false) — используется порядок векторного скора")
+            self.rerank_model = rerank_model
 
             # === 3. DUAL RETRIEVER (документация + тикеты) ===
             log.info("🔀 Построение DualRetriever...")
@@ -338,12 +447,24 @@ class RAGEngine:
                 if not settings.google_api_keys:
                     raise ValueError("❌ GOOGLE_API_KEYS не установлена в .env!")
                 
+                is_gemma4 = settings.llm_model_name.lower().startswith("gemma-4-")
+                gemini_request_kwargs = {
+                    "timeout": 90 if is_gemma4 else settings.llm_timeout,
+                    "max_retries": 0 if is_gemma4 else settings.llm_max_retries,
+                }
+                if is_gemma4:
+                    gemini_request_kwargs.update(
+                        thinking_level="minimal",
+                        include_thoughts=False,
+                    )
+                    log.info("Gemma 4: minimal thinking, 90s timeout, retries disabled")
+
                 llms = [
                     ChatGoogleGenerativeAI(
                         model=settings.llm_model_name,
                         google_api_key=k,
                         temperature=0.2,
-                        timeout=settings.llm_timeout,
+                        **gemini_request_kwargs,
                         callbacks=[KeyRotationCallbackHandler(key_index=i)],
                     )
                     for i, k in enumerate(settings.google_api_keys)
@@ -473,7 +594,7 @@ class RAGEngine:
 
             support_prompt_template = ChatPromptTemplate.from_template("""
 ВАЖНОЕ ПРАВИЛО КАЧЕСТВА ОТВЕТА:
-Ты готовишь приватную подсказку инженеру техподдержки, а не финальный ответ клиенту.
+Ты готовишь рабочую подсказку для инженера техподдержки.
 Ответ должен помогать инженеру проверить гипотезу, а не звучать как уверенное решение без доказательств.
 
 СТРОГИЙ РЕЖИМ ДОКАЗАТЕЛЬНОСТИ:
@@ -485,32 +606,21 @@ class RAGEngine:
 - Не объединяй две фразы из разных мест источника в новый вывод, если такая связь не указана в источнике явно.
 - Если один источник противоречит другому или источник говорит "нет поддержки", не превращай это в правило о значении маркировки.
 
-Обязательный стиль draft_private_comment:
-- Пиши по-русски.
-- Разделяй подтвержденные факты и предположения.
-- Начинай с короткого вывода: что вероятнее всего и насколько это подтверждено.
-- Используй разделы:
-  **Что известно из обращения**
-  **Что подтверждено источниками**
-  **Наиболее вероятно**
-  **Проверить сначала**
-  **Гипотезы и ограничения**
-  **Что запросить у клиента**
-- В разделе "Что подтверждено источниками" указывай метки [D1], [D2], [T1] рядом с тезисами.
-- В разделе "Гипотезы и ограничения" явно пиши, если вывод основан на похожем тикете или косвенном совпадении, а не на документации.
-- Не утверждай существование конкретного поля интерфейса, параметра, чекбокса, вкладки, режима, команды или точного пути меню, если это не подтверждено найденным источником. Если это только предположение, пометь как "гипотеза".
-- Не добавляй универсальные советы ради объема. Лучше 3-5 проверок, но привязанных к источникам и тексту обращения.
-- Если источники слабо связаны с вопросом, прямо напиши, что прямого подтверждения нет, и снизь confidence до low или medium.
-- confidence = high только если есть прямое подтверждение в документации или тикете с тем же симптомом и решением.
-- confidence = medium если есть похожие случаи, но нет прямой инструкции.
-- confidence = low если есть только общие сведения или не хватает контекста.
+Формат draft_private_comment — это ответ для коллеги-инженера ТП, который сам разбирается в вопросе. Не пиши про «клиента», если это прямо не следует из запроса.
 
-Исключение для справочных запросов по модулю:
-- Если пользователь просит "полную информацию", "характеристики", "описание", "что известно" по конкретному модулю, не оформляй draft_private_comment как диагностику инцидента.
-- В таком случае начни с раздела "Карточка модуля" и перечисли только подтвержденные документацией сведения: каноническое имя, назначение, характеристики, интерфейсы, диагностические параметры, ограничения и источники.
-- Не добавляй "Что запросить у клиента", если вопрос не похож на обращение о неисправности.
-- Похожие тикеты для справочного запроса используй только в конце как "Связанные обращения", не смешивай их с официальным описанием модуля.
-
+По умолчанию ответ короткий и прикладной:
+- Сначала определи тип запроса. Нумерованную последовательность действий давай только если пользователь явно спрашивает «как», «порядок», «процедура», «настройка», «сброс», «войти/выйти» или просит выполнить действие.
+- На справочный вопрос «что это», «что такое», «для чего», «какие возможности» сначала дай прямое определение или перечень возможностей в 1–3 коротких абзацах. Не превращай такой ответ в инструкцию по поиску, подключению, проверке или настройке, если пользователь этого не просил.
+- Если для справочного вопроса прямого определения в извлечённых фрагментах нет, напиши: «В найденных источниках прямого определения <термин из вопроса> не найдено». Можно добавить только явно подтверждённые наблюдения. Не компенсируй отсутствие определения общими советами вроде «откройте проект», «проверьте список библиотек» или «уточните у разработчика».
+- Для процедуры дай все подтвержденные шаги в правильном порядке (обычно 3–10); для справки — 1–3 коротких абзаца.
+- Если в документации есть конкретная последовательность действий, команды, положения переключателей, сроки или проверки результата, перенеси их в draft_private_comment. Не заменяй такую последовательность фразой «следуйте процедуре из документации».
+- Добавь один блок «Важно:» только при существенном риске, необратимом действии, несовпадении модели или отсутствии прямого подтверждения.
+- Один уточняющий вопрос допустим только если без него нельзя дать безопасное действие. Не создавай список уточнений «на всякий случай».
+- Ставь метку источника [D1], [T1] рядом с конкретным фактом или шагом. Не пересказывай источник вторым слоем.
+- Не используй шаблонные заголовки «Что известно», «Наиболее вероятно», «Проверить сначала», «Гипотезы и ограничения», «Что запросить». Не описывай собственное рассуждение.
+- Не добавляй тикеты в ответ, если они не дают дополнительного практического действия. Опыт тикета не заменяет инструкцию из документации.
+- Если прямой инструкции нет, скажи об этом одной фразой и отдели подтвержденное от гипотезы.
+- Не добавляй универсальные советы ради объема.
 Правила для similar_tickets:
 - Добавляй тикет только если он реально помогает текущему обращению.
 - relevance_reason обязателен: укажи конкретное совпадение симптома, оборудования, версии, ошибки, лога или действия.
@@ -531,11 +641,12 @@ class RAGEngine:
 - Если источник на русском, пересказывай его по-русски и сохраняй технические обозначения как есть: KEY, RUN/STOP, LD1-LD3, PF.
 - draft_private_comment должен быть готовой приватной подсказкой инженеру ТП на русском языке.
 - docs_answer должен быть на русском языке.
+- docs_answer must keep Markdown line breaks. If documentation contains a procedure or ordered steps, write each step on a separate numbered line. Never compress steps as "1) ...; 2) ...; 3) ..." in one paragraph.
 - similar_tickets.problem_summary, similar_tickets.solution_summary, evidence_notes.claim, recommended_questions и internal_notes тоже должны быть на русском языке.
 - Для процедурных запросов сначала дай конкретную последовательность действий, если она есть в источниках.
 - Не включай в similar_tickets обращение, если не можешь кратко сформулировать его проблему или решение.
 
-Ты помощник сотрудника технической поддержки. Твой ответ является ПРИВАТНОЙ подсказкой для инженера, а не публичным ответом клиенту.
+Ты помощник сотрудника технической поддержки. Отвечай как рабочий помощник коллеге-инженеру.
 
 Нужно строго разделить:
 1. Информацию из официальной документации.
@@ -547,7 +658,7 @@ class RAGEngine:
 - Если документация не дает точного решения, дай полезную общую информацию по темам из обращения.
 - Тикеты используй как опыт прошлых кейсов, а не как официальную инструкцию.
 - Для каждого похожего тикета укажи номер обращения, кратко проблему, кратко решение и почему он похож.
-- Если данных мало, явно напиши, что нужно уточнить.
+- Если данных недостаточно, кратко назови ровно недостающий факт; не перечисляй общие уточнения.
 - Верни валидный JSON по заданной схеме.
 - Если в блоке "Модули, определенные по вопросу" есть модули [M...], обязательно включи их в docs_answer и draft_private_comment без изменения кода и канонического имени.
 - Не заменяй канонический код модуля на похожий. Например, DI032011 должен оставаться R500 DI 32 011, а не DI 32 111.
@@ -557,6 +668,9 @@ class RAGEngine:
 
 Режим доказательности:
 {strict_evidence_context}
+
+Проверка совпадения оборудования:
+{equipment_mismatch_context}
 
 Модули, определенные по вопросу:
 {module_context}
@@ -573,12 +687,11 @@ class RAGEngine:
 Источники похожих обращений:
 {ticket_sources_context}
 
-Дополнительные обязательные поля JSON:
-- evidence_notes: список ключевых технических тезисов. Для каждого тезиса укажи source_ids из доступных источников, например ["D1"] или ["D1", "T1"]. Если тезис является предположением, явно напиши это в comment.
-- recommended_questions: конкретные вопросы, файлы, логи, версии ПО или настройки, которые нужно запросить у клиента.
-- internal_notes: проверки и действия, которые должен выполнить инженер техподдержки до ответа клиенту.
-- Не добавляй публичный ответ клиенту. draft_private_comment должен оставаться приватной подсказкой инженеру.
-
+Дополнительные поля JSON — это внутренний SGR-аудит, они не являются частью ответа в чате:
+- evidence_notes: только проверяемые ключевые тезисы с source_ids.
+- recommended_questions: заполняй только при реально недостающих для безопасного действия данных; иначе [].
+- internal_notes: только необходимые внутренние проверки; иначе [].
+- draft_private_comment — готовая краткая рабочая подсказка коллеге-инженеру, не ответ «для клиента».
 Важно про похожие обращения:
 - Если этот блок пустой, верни similar_tickets = [].
 - Не придумывай номера обращений и не превращай документы в обращения.
@@ -588,7 +701,7 @@ class RAGEngine:
 - В docs_answer и draft_private_comment указывай ссылки на источники через метки [D1], [D2], [T1] рядом с подтверждаемыми тезисами.
 - Используй только источники из блоков "Источники документации" и "Источники похожих обращений".
 - Если подходящего источника нет, явно напиши, что в найденных источниках подтверждения нет.
-- Не оставляй evidence_notes, recommended_questions и internal_notes пустыми, если по заявке есть что проверить или уточнить.
+- Не заполняй recommended_questions и internal_notes ради полноты: пустой список предпочтительнее выдуманных проверок.
 """)
 
             if settings.active_llm == "gigachat":
@@ -610,12 +723,181 @@ class RAGEngine:
             support_chain = support_prompt_template | support_structured_llm
             log.debug("✓ Support private chain собрана")
 
-            return retriever, sgr_chain, support_chain
+            wiki_prompt_template = ChatPromptTemplate.from_template("""
+You are RegLab Wiki Chat for OpenWebUI.
+Your job is to collect and summarize information found in the provided sources. You are not a support engineer and you must not try to solve the user's incident.
+
+Return valid JSON matching WikiChatResponse.
+All user-facing string fields must be written in Russian. Keep technical names, module codes, interface names, parameters and ticket IDs exactly as they appear in sources.
+
+Core policy:
+1. Official documentation is the primary source of facts.
+2. Support tickets are historical cases only: describe what happened in those tickets and how they were resolved.
+3. Never adapt a historical ticket solution as the solution for the current user request.
+
+Evidence rules:
+- Every technical fact in docs_answer and final_answer must cite a source marker near the claim: [D1], [D2], [T1].
+- Use [T...] only for historical-ticket statements or phrases explicitly marked as a similar ticket case.
+- Do not infer definitions of abbreviations, suffixes, letters in markings, parameters or UI controls from indirect matches.
+- If there is no direct definition or instruction, explicitly write in Russian that direct confirmation was not found in the retrieved sources.
+- Do not merge statements from different sources into a new conclusion unless that link is explicit in the sources.
+- Preserve exact canonical module and equipment names. Do not replace them with similar names.
+
+Forbidden in wiki mode:
+- Do not write diagnostics such as "check first", "recommended action", "probable cause", or "ask the client" unless this is a documented procedure in an official source.
+- Do not provide a troubleshooting plan. If a procedure exists in documentation, present it as a documented reference procedure, not as your recommendation.
+- Do not claim that the current issue is solved by a historical ticket.
+- Do not include private support notes, internal notes, or a draft reply to a client.
+- Do not include a detected-modules/debug block in the final answer.
+- Do not add generic advice for volume.
+
+Required final_answer structure:
+Write the following three section headings in Russian, exactly matching their meanings:
+1. What was found in documentation.
+2. Similar historical support tickets.
+3. What was not found in the retrieved sources.
+
+In the documentation section, list all relevant documented information: definitions, purpose, parameters, limits, procedures, versions and applicability conditions. If a source refers to a different model, series or version, state that next to the source marker.
+
+In the ticket section, include only truly similar tickets. For each ticket, give ticket ID, problem summary, how that historical ticket was resolved or closed, and why it is similar. Phrase every ticket item as historical fact, not as a recommendation for the current user.
+
+In the missing-context section, state missing direct definitions, instructions, confirmations, limits or applicability details.
+
+JSON field rules:
+- docs_answer: only official documentation facts with [D...] markers. Preserve Markdown line breaks; procedures and ordered lists must use one step per line.
+- final_answer: preserve Markdown line breaks; never compress numbered steps into a single paragraph.
+- similar_tickets: only tickets explicitly present in the provided ticket context. Do not invent ticket IDs or URLs.
+- similar_tickets.solution_summary: only how the historical ticket was resolved; do not transfer the solution to the current request.
+- evidence_notes: verifiable claims only, with source_ids from available sources.
+- source_limitations: weak matches, model/version mismatches, absent direct instruction or absent definition.
+- confidence = high only with direct documentation for the requested entity; medium for partial docs or similar tickets; low for weak matches.
+
+Evidence mode:
+{strict_evidence_context}
+
+Metadata warnings:
+{equipment_mismatch_context}
+
+Detected modules:
+{module_context}
+
+Official documentation:
+{docs_context}
+
+Documentation sources:
+{doc_sources_context}
+
+Similar support tickets:
+{tickets_context}
+
+Ticket sources:
+{ticket_sources_context}
+
+Chat history:
+{chat_history}
+
+User question:
+{input}
+""")
+
+            if settings.active_llm == "gigachat":
+                wiki_structured_llms = [
+                    candidate.with_structured_output(WikiChatResponse)
+                    for candidate in llm_candidates
+                ]
+            else:
+                wiki_structured_llms = [
+                    candidate.with_structured_output(WikiChatResponse, method="json_mode")
+                    for candidate in llm_candidates
+                ]
+            wiki_structured_llm = (
+                RoundRobinFallbackRunnable(wiki_structured_llms, label="Wiki Chat LLM")
+                if len(wiki_structured_llms) > 1
+                else wiki_structured_llms[0]
+            )
+
+            chat_chain = wiki_prompt_template | wiki_structured_llm
+            log.debug("Wiki chat SGR chain built")
+
+            reflection_prompt_template = ChatPromptTemplate.from_template("""
+You are the internal retrieval controller for RegLab Wiki Chat.
+Do not answer the user. Decide whether the current source set is enough for a factual, cited wiki answer.
+Return valid JSON matching RetrievalReflection.
+
+Rules:
+- Official documentation is primary. Tickets are only historical examples.
+- Request follow-up searches only when they can likely add direct evidence or clarify a source mismatch.
+- Keep follow-up queries short, concrete, and searchable.
+- Preserve exact product/model names from the user question. R500 and R500S are different products; never treat them as interchangeable.
+- If the user asks about a specific model, follow-up queries must include that exact model name when relevant.
+- Do not repeat queries already listed in Already tried queries.
+- Use at most three total follow-up queries per round across documentation and tickets.
+- Mark enough_context=true when sources already contain direct documentation for the requested entity or when additional retrieval is unlikely to help.
+
+Detected modules:
+{module_context}
+
+Already tried queries:
+{already_tried_queries}
+
+Current documentation context:
+{docs_context}
+
+Current ticket context:
+{tickets_context}
+
+Chat history:
+{chat_history}
+
+User question:
+{input}
+""")
+
+            if settings.active_llm == "gigachat":
+                reflection_structured_llms = [
+                    candidate.with_structured_output(RetrievalReflection)
+                    for candidate in llm_candidates
+                ]
+            else:
+                reflection_structured_llms = [
+                    candidate.with_structured_output(RetrievalReflection, method="json_mode")
+                    for candidate in llm_candidates
+                ]
+            reflection_structured_llm = (
+                RoundRobinFallbackRunnable(reflection_structured_llms, label="Wiki Retrieval Reflection LLM")
+                if len(reflection_structured_llms) > 1
+                else reflection_structured_llms[0]
+            )
+            retrieval_reflection_chain = reflection_prompt_template | reflection_structured_llm
+            log.debug("Wiki retrieval reflection chain built")
+
+            return retriever, sgr_chain, support_chain, chat_chain, retrieval_reflection_chain
 
         except Exception as e:
             log.error(f"❌ Ошибка при построении pipeline: {e}", exc_info=True)
             raise RuntimeError(f"Failed to build RAG pipeline: {str(e)}") from e
 
+    @staticmethod
+    def _is_incident_query(query: str) -> bool:
+        """Return whether a question is likely to need ticket diagnostics."""
+        normalized = (query or "").lower().replace("ё", "е")
+        markers = (
+            "ошиб", "исключ", "отказ", "не работает", "не загруж",
+            "download denied", "denied", "сбой", "авари", "не видит",
+            "не запуска", "лог", "прошив", "firmware",
+        )
+        return any(marker in normalized for marker in markers)
+
+    @staticmethod
+    def _adaptive_ticket_results_are_weak(tickets: List[Any]) -> bool:
+        """Use the expensive top-80 rerank only when the first ticket pass is weak."""
+        if len(tickets) < 3:
+            return True
+        scores = [
+            float((getattr(ticket, "metadata", {}) or {}).get("rerank_score", 0.0) or 0.0)
+            for ticket in tickets
+        ]
+        return not scores or max(scores) < 0.65
     def process_support_ticket(self, query: str) -> SupportPrivateResponse:
         """Builds a private support hint with separate docs and ticket retrieval."""
         if not query:
@@ -653,7 +935,12 @@ class RAGEngine:
                     "Added exact module documentation sections: %s",
                     ", ".join(doc.metadata.get("page_title", "") for doc in exact_module_docs[:3]),
                 )
-            docs = merge_documents(exact_module_docs, self.retriever.retrieve_docs(retrieval_query))
+            adaptive_mode = self.profile == "adaptive"
+            adaptive_incident = adaptive_mode and self._is_incident_query(query)
+            docs = merge_documents(
+                exact_module_docs,
+                self.retriever.retrieve_docs(retrieval_query, use_reranker=not adaptive_mode),
+            )
             if settings.second_db_name == settings.active_db_name:
                 log.warning(
                     "Ticket retrieval disabled: second_db points to the docs backend (%s)",
@@ -671,14 +958,32 @@ class RAGEngine:
                     if detected_modules and hasattr(self.retriever, "retrieve_tickets_by_module_codes")
                     else []
                 )
+                ticket_quality_mode = (
+                    self.profile in {"deep", "chat_deep"}
+                    and self.retriever.reranker_model is not None
+                )
+                initial_ticket_k = 30 if adaptive_incident else (80 if ticket_quality_mode or detected_modules else None)
+                initial_ticket_limit = 4 if adaptive_mode else (8 if ticket_quality_mode else (12 if detected_modules else 2))
                 ticket_candidates = [
                     doc for doc in self.retriever.retrieve_tickets(
                         retrieval_query,
-                        final_limit=12 if detected_modules else 2,
-                        child_k=80 if detected_modules else None,
+                        final_limit=initial_ticket_limit,
+                        child_k=initial_ticket_k,
+                        use_reranker=not adaptive_mode or adaptive_incident,
                     )
                     if is_ticket_document(doc)
                 ]
+                if adaptive_incident and self._adaptive_ticket_results_are_weak(ticket_candidates):
+                    log.info("Adaptive ticket search is weak; expanding rerank pool from 30 to 80 chunks")
+                    ticket_candidates = [
+                        doc for doc in self.retriever.retrieve_tickets(
+                            retrieval_query,
+                            final_limit=8,
+                            child_k=80,
+                            use_reranker=True,
+                        )
+                        if is_ticket_document(doc)
+                    ]
                 merged_ticket_candidates: List[Any] = []
                 seen_ticket_ids = set()
                 for doc in [*exact_module_tickets, *ticket_candidates]:
@@ -694,8 +999,9 @@ class RAGEngine:
                     merged_ticket_candidates,
                     detected_modules,
                     query=query,
-                    limit=2,
+                    limit=4 if (ticket_quality_mode or adaptive_mode) else 2,
                 )
+
 
             doc_sources = source_references(docs, prefix="D")
             ticket_sources = source_references(tickets, ticket_only=True, prefix="T")
@@ -722,6 +1028,7 @@ class RAGEngine:
             response = self.support_chain.invoke({
                 "input": query,
                 "strict_evidence_context": strict_evidence_context(query),
+                "equipment_mismatch_context": check_and_format_equipment_mismatch_warning(query, doc_sources),
                 "module_context": module_context,
                 "docs_context": docs_context,
                 "tickets_context": tickets_context,
@@ -898,3 +1205,498 @@ class RAGEngine:
             )
 
             raise RuntimeError(f"Failed to process query: {str(e)}") from e
+
+
+    def _normalize_followup_queries(self, queries: Any, already_tried: set, limit: int) -> List[str]:
+        """Return short unique follow-up retrieval queries that were not tried yet."""
+        if not queries:
+            return []
+        if isinstance(queries, str):
+            raw_queries = [queries]
+        else:
+            raw_queries = list(queries)
+
+        normalized: List[str] = []
+        for raw_query in raw_queries:
+            query = " ".join(str(raw_query or "").split())
+            if not query:
+                continue
+            if len(query) > 220:
+                query = query[:220].rsplit(" ", 1)[0] or query[:220]
+            key = query.lower()
+            if key in already_tried:
+                continue
+            already_tried.add(key)
+            normalized.append(query)
+            if len(normalized) >= limit:
+                break
+        return normalized
+
+    def _merge_ticket_documents(self, current: List, incoming: List) -> List:
+        """Merge ticket documents by ticket_id while keeping retrieval order stable."""
+        merged: List = []
+        seen = set()
+        for doc in [*(current or []), *(incoming or [])]:
+            if not is_ticket_document(doc):
+                continue
+            metadata = getattr(doc, "metadata", {}) or {}
+            ticket_id = metadata.get("ticket_id")
+            key = ("ticket", str(ticket_id)) if ticket_id else ("object", id(doc))
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(doc)
+        return merged
+
+    def _filter_wiki_docs_by_requested_product(
+        self,
+        latest_query: str,
+        detected_modules: List[Dict[str, Any]],
+        docs: List,
+    ) -> List:
+        """Keep explicitly requested product families separated in wiki chat output."""
+        if not docs:
+            return docs
+
+        query_lower = (latest_query or "").lower()
+        query_mentions_r500s = "r500s" in query_lower
+        query_mentions_r500 = bool(re.search(r"(?<![a-z0-9])r500(?!s)(?![a-z0-9])", query_lower))
+        if query_mentions_r500 and query_mentions_r500s:
+            return docs
+
+        module_families = {
+            str(module.get("product_family") or "").strip().lower()
+            for module in detected_modules or []
+            if str(module.get("product_family") or "").strip()
+        }
+        module_products = set()
+        for family in module_families:
+            if "r500s" in family:
+                module_products.add("r500s")
+            elif re.search(r"(?<![a-z0-9])r500(?!s)(?![a-z0-9])", family):
+                module_products.add("r500")
+
+        requested_product = ""
+        if query_mentions_r500s:
+            requested_product = "r500s"
+        elif query_mentions_r500:
+            requested_product = "r500"
+        elif len(module_products) == 1:
+            requested_product = next(iter(module_products))
+
+        if requested_product not in {"r500", "r500s"}:
+            return docs
+
+        filtered: List = []
+        dropped = 0
+        for doc in docs:
+            metadata = getattr(doc, "metadata", {}) or {}
+            equipment = str(metadata.get("equipment_type") or "").lower()
+            source_file = str(metadata.get("source_file") or "").lower()
+            source_text = f"{equipment} {source_file}"
+            is_r500s_source = "r500s" in source_text
+            is_r500_source = bool(re.search(r"(?<![a-z0-9])r500(?!s)(?![a-z0-9])", source_text))
+
+            if requested_product == "r500" and is_r500s_source:
+                dropped += 1
+                continue
+            if requested_product == "r500s" and is_r500_source:
+                dropped += 1
+                continue
+            filtered.append(doc)
+
+        if dropped:
+            log.info(
+                "Wiki product filter removed %d cross-product docs for requested_product=%s",
+                dropped,
+                requested_product.upper(),
+            )
+        return filtered
+
+    def _should_expand_wiki_context(self, latest_query: str, docs: List, tickets: List) -> bool:
+        """Skip the extra reflection LLM call when the first-pass context is already strong."""
+        if self.profile != "chat_deep":
+            return False
+        if not docs:
+            return True
+
+        query_lower = (latest_query or "").lower()
+        high_value_markers = (
+            "ticket",
+            "r500 and r500s",
+            "r500s and r500",
+            "r500 и r500s",
+            "r500s и r500",
+            "тикет",
+            "обращен",
+            "похож",
+            "решал",
+            "решили",
+            "истор",
+            "сравн",
+            "отлич",
+            "разниц",
+        )
+        if any(marker in query_lower for marker in high_value_markers):
+            return True
+
+        doc_chars = sum(len(getattr(doc, "page_content", "") or "") for doc in docs[:WIKI_ITERATIVE_SKIP_MIN_DOCS])
+        if len(docs) < WIKI_ITERATIVE_SKIP_MIN_DOCS or doc_chars < WIKI_ITERATIVE_SKIP_MIN_DOC_CHARS:
+            return True
+
+        log.info(
+            "Wiki iterative retrieval skipped: first-pass context is sufficient (docs=%d, chars=%d, tickets=%d)",
+            len(docs),
+            doc_chars,
+            len(tickets or []),
+        )
+        return False
+
+    def _expand_wiki_context_iteratively(
+        self,
+        latest_query: str,
+        history_text: str,
+        module_context: str,
+        detected_modules: List[Dict[str, Any]],
+        retrieval_query: str,
+        docs: List,
+        tickets: List,
+    ):
+        """Let chat_deep request a small number of extra vector searches before answering."""
+        if self.profile != "chat_deep":
+            return docs, tickets, []
+
+        reflection_notes: List[str] = []
+        already_tried = {retrieval_query.lower(), latest_query.lower()}
+        tickets_enabled = settings.second_db_name != settings.active_db_name
+
+        for round_index in range(WIKI_ITERATIVE_MAX_ROUNDS):
+            try:
+                doc_sources = source_references(docs, prefix="D")
+                ticket_sources = source_references(tickets, ticket_only=True, prefix="T")
+                docs_context = format_docs(
+                    docs,
+                    sources=doc_sources,
+                    max_total_chars=WIKI_REFLECTION_DOCS_MAX_CHARS,
+                    max_doc_chars=900,
+                )
+                tickets_context = format_ticket_docs(
+                    tickets,
+                    sources=ticket_sources,
+                    max_total_chars=WIKI_REFLECTION_TICKETS_MAX_CHARS,
+                    max_doc_chars=700,
+                )
+
+                reflection = self.retrieval_reflection_chain.invoke({
+                    "input": latest_query,
+                    "chat_history": history_text or "No previous chat history.",
+                    "module_context": module_context,
+                    "already_tried_queries": "\n".join(sorted(already_tried)),
+                    "docs_context": docs_context,
+                    "tickets_context": tickets_context,
+                })
+
+                if reflection.source_risks:
+                    reflection_notes.extend(reflection.source_risks)
+                if reflection.missing_facts:
+                    reflection_notes.extend(reflection.missing_facts)
+
+                if reflection.enough_context:
+                    log.info("Wiki iterative retrieval stopped at round %d: enough context", round_index + 1)
+                    break
+
+                remaining = WIKI_ITERATIVE_MAX_FOLLOWUP_QUERIES
+                doc_queries = self._normalize_followup_queries(
+                    reflection.followup_doc_queries,
+                    already_tried,
+                    remaining,
+                )
+                remaining -= len(doc_queries)
+                ticket_queries = self._normalize_followup_queries(
+                    reflection.followup_ticket_queries if tickets_enabled else [],
+                    already_tried,
+                    remaining,
+                )
+
+                if not doc_queries and not ticket_queries:
+                    log.info("Wiki iterative retrieval stopped at round %d: no new queries", round_index + 1)
+                    break
+
+                docs_before = len(docs)
+                tickets_before = len(tickets)
+                for query in doc_queries:
+                    focused_query = build_module_enriched_query(query, detected_modules)
+                    docs = merge_documents(docs, self.retriever.retrieve_docs(focused_query))
+
+                if tickets_enabled:
+                    ticket_candidates: List = []
+                    for query in ticket_queries:
+                        focused_query = build_module_enriched_query(query, detected_modules)
+                        ticket_candidates.extend([
+                            doc for doc in self.retriever.retrieve_tickets(
+                                focused_query,
+                                final_limit=8 if detected_modules else 4,
+                                child_k=60 if detected_modules else None,
+                            )
+                            if is_ticket_document(doc)
+                        ])
+                    tickets = self._merge_ticket_documents(tickets, ticket_candidates)
+                    tickets = rank_tickets_for_modules(
+                        tickets,
+                        detected_modules,
+                        query=latest_query,
+                        limit=4,
+                    )
+
+                log.info(
+                    "Wiki iterative retrieval round %d: +%d docs, +%d tickets",
+                    round_index + 1,
+                    max(0, len(docs) - docs_before),
+                    max(0, len(tickets) - tickets_before),
+                )
+                if len(docs) == docs_before and len(tickets) == tickets_before:
+                    break
+            except Exception as exc:
+                log.warning("Wiki iterative retrieval failed, continuing with current context: %s", exc, exc_info=True)
+                break
+
+        deduped_notes: List[str] = []
+        seen_notes = set()
+        for note in reflection_notes:
+            note_text = str(note or "").strip()
+            if not note_text or note_text in seen_notes:
+                continue
+            seen_notes.add(note_text)
+            deduped_notes.append(note_text)
+        return docs, tickets, deduped_notes
+
+
+    def process_wiki_chat_dialog(
+        self,
+        messages: List[Dict[str, str]],
+        max_history_turns: int = 2,
+    ) -> WikiChatResponse:
+        """Process an OpenWebUI dialog in wiki mode: docs first, tickets as history."""
+        if not messages:
+            raise ValueError("messages cannot be empty")
+
+        user_messages = [msg for msg in messages if msg.get("role") == "user"]
+        if not user_messages:
+            raise ValueError("user messages were not found")
+
+        latest_query = user_messages[-1].get("content", "").strip()
+        if not latest_query:
+            raise ValueError("last user message is empty")
+
+        start = time.perf_counter()
+        docs: List = []
+        tickets: List = []
+
+        # Deliberately ignore all earlier OpenWebUI messages. This makes each
+        # request reproducible and prevents prior questions from changing
+        # module detection, retrieval, or the final answer.
+        history_text = ""
+        module_detection_query = latest_query
+        try:
+            log.info(
+                "Wiki chat: processing query (%s chars, profile=%s)",
+                len(latest_query),
+                self.profile,
+            )
+
+            detected_modules = detect_modules_in_query(module_detection_query)
+            module_context = format_detected_modules(detected_modules)
+            retrieval_query = build_module_enriched_query(latest_query, detected_modules)
+            if detected_modules:
+                log.info(
+                    "Wiki chat detected modules: %s",
+                    ", ".join(module.get("canonical", "") for module in detected_modules),
+                )
+
+            exact_doc_titles = module_doc_page_title_hints(detected_modules)
+            exact_module_docs = (
+                self.retriever.retrieve_docs_by_page_titles(exact_doc_titles, limit=20)
+                if exact_doc_titles and hasattr(self.retriever, "retrieve_docs_by_page_titles")
+                else []
+            )
+            docs = merge_documents(exact_module_docs, self.retriever.retrieve_docs(retrieval_query))
+
+            if settings.second_db_name == settings.active_db_name:
+                log.warning(
+                    "Wiki ticket retrieval disabled: second_db points to the docs backend (%s)",
+                    settings.second_db_name,
+                )
+                tickets = []
+            else:
+                module_codes = [
+                    str(module.get("module_code") or "").strip()
+                    for module in detected_modules
+                    if str(module.get("module_code") or "").strip()
+                ]
+                exact_module_tickets = (
+                    self.retriever.retrieve_tickets_by_module_codes(module_codes, limit=60)
+                    if detected_modules and hasattr(self.retriever, "retrieve_tickets_by_module_codes")
+                    else []
+                )
+                ticket_quality_mode = (
+                    self.profile in {"deep", "chat_deep"}
+                    and self.retriever.reranker_model is not None
+                )
+                ticket_candidates = [
+                    doc for doc in self.retriever.retrieve_tickets(
+                        retrieval_query,
+                        final_limit=16 if detected_modules else (8 if ticket_quality_mode else 4),
+                        child_k=80 if (ticket_quality_mode or detected_modules) else None,
+                    )
+                    if is_ticket_document(doc)
+                ]
+                merged_ticket_candidates: List[Any] = []
+                seen_ticket_ids = set()
+                for doc in [*exact_module_tickets, *ticket_candidates]:
+                    if not is_ticket_document(doc):
+                        continue
+                    ticket_id = doc.metadata.get("ticket_id") if hasattr(doc, "metadata") else None
+                    key = ticket_id or id(doc)
+                    if key in seen_ticket_ids:
+                        continue
+                    seen_ticket_ids.add(key)
+                    merged_ticket_candidates.append(doc)
+                tickets = rank_tickets_for_modules(
+                    merged_ticket_candidates,
+                    detected_modules,
+                    query=latest_query,
+                    limit=4,
+                )
+
+            docs = self._filter_wiki_docs_by_requested_product(latest_query, detected_modules, docs)
+
+            reflection_notes: List[str] = []
+            if self._should_expand_wiki_context(latest_query, docs, tickets):
+                docs, tickets, reflection_notes = self._expand_wiki_context_iteratively(
+                    latest_query=latest_query,
+                    history_text=history_text,
+                    module_context=module_context,
+                    detected_modules=detected_modules,
+                    retrieval_query=retrieval_query,
+                    docs=docs,
+                    tickets=tickets,
+                )
+                docs = self._filter_wiki_docs_by_requested_product(latest_query, detected_modules, docs)
+
+            doc_sources = source_references(docs, prefix="D")
+            ticket_sources = source_references(tickets, ticket_only=True, prefix="T")
+            docs_context = format_docs(
+                docs,
+                sources=doc_sources,
+                max_total_chars=WIKI_DOCS_MAX_CHARS,
+                max_doc_chars=WIKI_DOC_MAX_CHARS,
+            )
+            tickets_context = format_ticket_docs(
+                tickets,
+                sources=ticket_sources,
+                max_total_chars=WIKI_TICKETS_MAX_CHARS,
+                max_doc_chars=WIKI_TICKET_MAX_CHARS,
+            )
+
+            response = self.chat_chain.invoke({
+                "input": latest_query,
+                "chat_history": history_text or "No previous chat history.",
+                "strict_evidence_context": strict_evidence_context(latest_query),
+                "equipment_mismatch_context": check_and_format_equipment_mismatch_warning(latest_query, doc_sources),
+                "module_context": module_context,
+                "docs_context": docs_context,
+                "tickets_context": tickets_context,
+                "doc_sources_context": format_source_references(doc_sources),
+                "ticket_sources_context": format_source_references(ticket_sources),
+            })
+
+            if detected_modules:
+                response.docs_answer = ensure_module_block(response.docs_answer, detected_modules)
+
+            response.final_answer = apply_entity_citation_guard(response.final_answer, latest_query, doc_sources)
+            response.doc_sources = doc_sources
+            response.ticket_sources = ticket_sources
+            if reflection_notes:
+                current_limitations = list(response.source_limitations or [])
+                seen_limitations = {str(item).strip() for item in current_limitations if str(item).strip()}
+                for note in reflection_notes:
+                    note_text = str(note or "").strip()
+                    if note_text and note_text not in seen_limitations:
+                        current_limitations.append(note_text)
+                        seen_limitations.add(note_text)
+                response.source_limitations = current_limitations
+            response.evidence_notes = [
+                note for note in response.evidence_notes
+                if note.claim.strip() and note.source_ids
+            ]
+            if not tickets:
+                response.similar_tickets = []
+            else:
+                response.similar_tickets = [
+                    ticket for ticket in response.similar_tickets
+                    if (ticket.relevance_reason or "").strip()
+                    and ((ticket.problem_summary or "").strip() or (ticket.solution_summary or "").strip())
+                ]
+            if not response.final_answer.strip():
+                response.final_answer = response.docs_answer.strip() or "No direct confirmation was found in retrieved sources."
+
+            elapsed = time.perf_counter() - start
+            log.info(
+                "Wiki chat response generated in %.2fs (profile=%s, docs=%d, tickets=%d)",
+                elapsed,
+                self.profile,
+                len(docs),
+                len(tickets),
+            )
+            log_query_audit(
+                query=latest_query,
+                equipment_filter=None,
+                retrieved_docs=docs + tickets,
+                response=response,
+                elapsed_sec=elapsed,
+            )
+            return response
+
+        except Exception as e:
+            elapsed = time.perf_counter() - start
+            log.error("Wiki chat failed after %.2fs: %s", elapsed, e, exc_info=True)
+            log_query_audit(
+                query=latest_query,
+                equipment_filter=None,
+                retrieved_docs=docs + tickets,
+                response=None,
+                elapsed_sec=elapsed,
+                extra={"error": str(e)},
+            )
+            raise RuntimeError(f"Failed to process wiki chat: {str(e)}") from e
+
+
+    def process_chat_dialog(
+        self,
+        messages: List[Dict[str, str]],
+        max_history_turns: int = 2,
+    ) -> SupportPrivateResponse:
+        """Обрабатывает сообщения чата (OpenWebUI) через проверенный 100% точный SGR-движок process_support_ticket."""
+        if not messages:
+            raise ValueError("messages не может быть пустым")
+
+        user_messages = [msg for msg in messages if msg.get("role") == "user"]
+        if not user_messages:
+            raise ValueError("Пользовательские сообщения не найдены")
+
+        latest_query = user_messages[-1].get("content", "").strip()
+        if not latest_query:
+            raise ValueError("Последний вопрос пользователя пуст")
+
+        start = time.perf_counter()
+
+        result = self.process_support_ticket(latest_query)
+        elapsed = time.perf_counter() - start
+        log.info(
+            "Precision SGR chat response generated in %.2fs (profile=%s, user_msgs=%d)",
+            elapsed,
+            self.profile,
+            len(user_messages),
+        )
+
+        return result

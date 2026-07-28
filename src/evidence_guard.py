@@ -2,6 +2,7 @@ import re
 from typing import Any, List
 
 from src.context_formatting import SourceReference
+from src.logger import log
 from src.module_detection import unique_texts
 
 
@@ -150,3 +151,87 @@ def apply_definition_guard(
     ]
     response.confidence = "low"
     return response
+
+
+def check_and_format_equipment_mismatch_warning(query: str, doc_sources: List[SourceReference]) -> str:
+    """Глобальная проверка несовпадения запрошенной серии оборудования и найденных источников.
+    
+    Универсально работает для любых серий и моделей (R500, R500S, R400, R200, AstraRegul и т.д.).
+    """
+    if not query or not doc_sources:
+        return ""
+
+    query_series = set(re.findall(r"\b(R\d{3}S?|REGUL\s*\d*|AstraRegul|ST\d{3}|CU\d{3})\b", query, flags=re.IGNORECASE))
+    query_series_compact = {s.upper().replace(" ", "") for s in query_series}
+
+    if not query_series_compact:
+        return ""
+
+    mismatches = []
+    for source in doc_sources:
+        source_text = f"{source.title} {source.source_file} {source.equipment_type} {source.breadcrumb}"
+        source_series_found = set(re.findall(
+            r"\b(R\d{3}S?|REGUL\s*\d*|AstraRegul|ST\d{3}|CU\d{3})\b",
+            source_text,
+            flags=re.IGNORECASE,
+        ))
+        source_series_compact = {series.upper().replace(" ", "") for series in source_series_found}
+        # Exact series comparison is important: R500 and R500S are different models.
+        matched = bool(query_series_compact & source_series_compact)
+        if not matched:
+            source_series_str = ", ".join(sorted(source_series_found)) if source_series_found else source.title
+            mismatches.append(f"[{source.source_id}] (на самом деле относится к '{source_series_str}')")
+
+    if not mismatches:
+        return ""
+
+    user_series_str = ", ".join(sorted(query_series_compact))
+    log.warning(
+        "EvidenceGuard: equipment mismatch. Requested: %s | Mismatched sources: %s",
+        user_series_str,
+        ", ".join(mismatches),
+    )
+    warning = (
+        "\n⚠️ ПРОВЕРКА СООТВЕТСТВИЯ ОБОРУДОВАНИЯ:\n"
+        f"- Запрошенная серия: {user_series_str}\n"
+        f"- Источники с другой серией: {', '.join(mismatches)}\n"
+        "Не переноси процедуру, параметры или выводы из этих источников на запрошенную серию "
+        "без явного подтверждения совместимости в самом источнике.\n"
+    )
+    if len(mismatches) == len(doc_sources):
+        warning += (
+            "Прямой инструкции для запрошенного оборудования в найденных источниках нет; "
+            "укажи это в ответе одной короткой фразой.\n"
+        )
+    return warning
+
+
+def apply_entity_citation_guard(answer: str, query: str, doc_sources: List[SourceReference]) -> str:
+    """Глобальный постобработчик ответа против подмены названий серий под метки источников."""
+    if not answer or not doc_sources or not query:
+        return answer
+
+    query_series = set(re.findall(r"\b(R\d{3}S?)\b", query, flags=re.IGNORECASE))
+    query_series_upper = {s.upper() for s in query_series}
+
+    if not query_series_upper:
+        return answer
+
+    sources_text = " ".join([f"{s.title} {s.source_file} {s.breadcrumb}" for s in doc_sources]).upper()
+    has_direct_source_match = any(series in sources_text for series in query_series_upper)
+
+    if not has_direct_source_match:
+        for series in query_series_upper:
+            pattern = re.compile(rf"({re.escape(series)}[^\n.!?]*?\[D\d+\]|\[D\d+\][^\n.!?]*?{re.escape(series)})", re.IGNORECASE)
+            if pattern.search(answer):
+                log.warning("EvidenceGuard: перехвачена ложная привязка серии %s к метке источника", series)
+                disclaimer = (
+                    f"> ⚠️ **Обратите внимание:** В найденной документации прямого руководства для **{series}** не обнаружено. "
+                    f"Приведенный ниже порядок действий описан в источниках для смежных моделей.\n\n"
+                )
+                if not answer.startswith("> ⚠️"):
+                    answer = disclaimer + answer
+                break
+
+    return answer
+

@@ -171,13 +171,13 @@ class DualRetriever(BaseRetriever):
         log.debug(f"  [{db_label}] извлечено {len(result)} документов (включая документы без родителей)")
         return result
 
-    def _rank_children(self, query: str, children: List[Document], *, limit: int | None = None) -> List[Document]:
+    def _rank_children(self, query: str, children: List[Document], *, limit: int | None = None, use_reranker: bool = True) -> List[Document]:
         """Ранжирует дочерние чанки внутри одного источника, не смешивая документацию и тикеты."""
         if not children:
             return []
         result_limit = limit or self.top_k_final
 
-        if self.reranker_model is not None:
+        if use_reranker and self.reranker_model is not None:
             with TimeProfiler(f"CrossEncoder Reranking ({len(children)} chunks)"):
                 pairs = [[query, d.page_content] for d in children]
                 scores = self.reranker_model.predict(pairs)
@@ -196,7 +196,34 @@ class DualRetriever(BaseRetriever):
             doc.metadata.setdefault("rerank_score", 0.0)
         return children[:result_limit]
 
-    def retrieve_docs(self, query: str) -> List[Document]:
+    @staticmethod
+    def _unique_parent_children(children: List[Document], limit: int) -> List[Document]:
+        """Keep the best child per parent so one ticket cannot consume the whole limit.
+
+        Tickets are short and their symptoms and solution often become separate
+        child chunks. Parent retrieval deduplicates them later, but doing that
+        only after applying ``final_limit`` can return fewer unique tickets than
+        requested. Deduplicate ranked children first while preserving rank.
+        """
+        result: List[Document] = []
+        seen = set()
+        for child in children:
+            metadata = child.metadata if hasattr(child, "metadata") else {}
+            key = (
+                metadata.get("doc_id")
+                or metadata.get("ticket_id")
+                or metadata.get("source_file")
+                or id(child)
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(child)
+            if len(result) >= limit:
+                break
+        return result
+
+    def retrieve_docs(self, query: str, *, use_reranker: bool = True) -> List[Document]:
         """Ищет только по коллекции документации без фильтра по оборудованию."""
         k = self.docs_retriever.search_kwargs.get("k", 30)
         children = self._search_children(
@@ -206,17 +233,17 @@ class DualRetriever(BaseRetriever):
             apply_filter=False,
             db_label="docs",
         )
-        top_children = self._rank_children(query, children)
+        top_children = self._rank_children(query, children, use_reranker=use_reranker)
         docs = self._fetch_parents(self.docs_retriever, top_children, "docs")
         docs.sort(key=lambda x: x.metadata.get("rerank_score", 0), reverse=True)
         return docs
-
     def retrieve_tickets(
         self,
         query: str,
         *,
         final_limit: int | None = None,
         child_k: int | None = None,
+        use_reranker: bool = True,
     ) -> List[Document]:
         """Ищет только по коллекции обращений технической поддержки."""
         k = child_k or self.tickets_retriever.search_kwargs.get("k", 30)
@@ -227,11 +254,17 @@ class DualRetriever(BaseRetriever):
             apply_filter=False,
             db_label="tickets",
         )
-        top_children = self._rank_children(query, children, limit=final_limit)
+        result_limit = final_limit or self.top_k_final
+        ranked_children = self._rank_children(
+            query,
+            children,
+            limit=len(children),
+            use_reranker=use_reranker,
+        )
+        top_children = self._unique_parent_children(ranked_children, result_limit)
         tickets = self._fetch_parents(self.tickets_retriever, top_children, "tickets")
         tickets.sort(key=lambda x: x.metadata.get("rerank_score", 0), reverse=True)
         return tickets
-
     def retrieve_tickets_by_module_codes(self, module_codes: List[str], *, limit: int = 30) -> List[Document]:
         """Достаёт обращения с точным совпадением module_code из payload metadata."""
         codes = [str(code).strip() for code in module_codes if str(code).strip()]

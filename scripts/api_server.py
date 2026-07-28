@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.engine import RAGEngine  # noqa: E402
 from src.logger import log  # noqa: E402
+from src.context_formatting import format_chat_sources_footer  # noqa: E402
 try:
     from faq_pipeline.search.ticket_vector_search import (  # noqa: E402
         DEFAULT_INDEX_DIR,
@@ -46,14 +47,17 @@ except ImportError:
         return "; ".join(values[:limit])[:max_len]
 
 
+# Kept for backwards-compatible code paths, but not exposed by /v1/models.
 MODEL_ID = "reglab-ai"
-DEEP_MODEL_ID = "reglab-ai-deep"
 TICKET_SEARCH_MODEL_ID = "reglab-ticket-search"
 EVA_ARTICLE_MODEL_ID = "reglab-eva-article"
+CHAT_MODEL_ID = "reglab-ai-chat"
+CHAT_DEEP_MODEL_ID = "reglab-ai-chat-deep"
+DEEP_MODEL_ID = "reglab-ai-deep"
+ADAPTIVE_MODEL_ID = "reglab-ai-adaptive"
 MODEL_PROFILES = {
-    MODEL_ID: "fast",
     DEEP_MODEL_ID: "deep",
-    EVA_ARTICLE_MODEL_ID: "deep",
+    ADAPTIVE_MODEL_ID: "adaptive",
 }
 API_VERSION = "1.1"
 DEFAULT_MAX_CONCURRENCY = 2
@@ -139,7 +143,7 @@ class ChatCompletionRequest(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    model: str = MODEL_ID
+    model: str = DEEP_MODEL_ID
     messages: List[ChatMessage] = Field(..., min_length=1)
     stream: bool = False
 
@@ -174,9 +178,9 @@ async def lifespan(app: FastAPI):
     app.state.inference_semaphore = asyncio.Semaphore(_max_concurrency())
 
     try:
-        log.info("Starting RegLab RAG API: initializing default fast RAGEngine...")
-        app.state.rag_engine = await run_in_threadpool(RAGEngine, "fast")
-        app.state.rag_engines["fast"] = app.state.rag_engine
+        log.info("Starting RegLab RAG API: initializing default deep RAGEngine...")
+        app.state.rag_engine = await run_in_threadpool(RAGEngine, "deep")
+        app.state.rag_engines["deep"] = app.state.rag_engine
         log.info("RegLab RAG API is ready.")
     except Exception as exc:
         app.state.startup_error = str(exc)
@@ -210,7 +214,7 @@ def _get_engine(request: Request) -> RAGEngine:
 
 
 def _profile_from_model(model_id: str) -> str:
-    return MODEL_PROFILES.get(model_id, "fast")
+    return MODEL_PROFILES.get(model_id, "deep")
 
 
 async def _get_engine_for_model(request: Request, model_id: str) -> RAGEngine:
@@ -226,7 +230,17 @@ async def _get_engine_for_model(request: Request, model_id: str) -> RAGEngine:
         engine = engines.get(profile)
         if engine is None:
             log.info("Lazy initialization of RAGEngine profile=%s for model=%s", profile, model_id)
-            engine = await run_in_threadpool(RAGEngine, profile)
+            deep_engine = engines.get("deep")
+            shared_embeddings = getattr(deep_engine, "dense_embeddings", None) if deep_engine else None
+            shared_reranker = getattr(deep_engine, "rerank_model", None) if deep_engine else None
+            if shared_embeddings is not None:
+                log.info("Reusing embedding model and reranker from deep profile for profile=%s", profile)
+            engine = await run_in_threadpool(
+                RAGEngine,
+                profile,
+                shared_embeddings=shared_embeddings,
+                shared_reranker=shared_reranker,
+            )
             engines[profile] = engine
             if profile == "deep":
                 request.app.state.rag_engine = engine
@@ -293,139 +307,6 @@ def _format_list(title: str, items: List[str]) -> str:
     return f"\n\n**{title}:**\n{lines}"
 
 
-def _format_evidence(notes: List[Any]) -> str:
-    if not notes:
-        return ""
-    lines = []
-    for note in notes:
-        data = note.model_dump() if hasattr(note, "model_dump") else dict(note)
-        claim = data.get("claim") or ""
-        source_ids = data.get("source_ids") or []
-        comment = data.get("comment") or ""
-        suffix = f" [{', '.join(source_ids)}]" if source_ids else ""
-        if comment:
-            suffix += f" - {comment}"
-        lines.append(f"- {claim}{suffix}")
-    return "\n\n**Evidence notes:**\n" + "\n".join(lines)
-
-
-def _format_sources(title: str, sources: List[Any]) -> str:
-    if not sources:
-        return ""
-    lines = []
-    for source in sources:
-        data = source.model_dump() if hasattr(source, "model_dump") else dict(source)
-        source_id = data.get("source_id") or ""
-        label = data.get("title") or data.get("source_file") or "Источник"
-        source_file = data.get("source_file") or ""
-        url = data.get("url") or ""
-        suffix = f" ({source_file})" if source_file and source_file != label else ""
-        prefix = f"[{source_id}] " if source_id else ""
-        lines.append(f"- {prefix}{label}{suffix}: {url}" if url else f"- {prefix}{label}{suffix}")
-        details = []
-        if data.get("equipment_type"):
-            details.append(f"Оборудование: {data['equipment_type']}")
-        if data.get("library_name"):
-            details.append(f"Библиотека: {data['library_name']}")
-        if data.get("release_version"):
-            details.append(f"Релиз: {data['release_version']}")
-        if data.get("breadcrumb"):
-            details.append(f"Раздел: {data['breadcrumb']}")
-        if details:
-            lines.append("  " + " | ".join(details))
-    return f"\n\n**{title}:**\n" + "\n".join(lines)
-
-
-def _format_support_answer(result: Any) -> str:
-    tickets_block = ""
-    if result.similar_tickets:
-        ticket_lines = "\n".join(
-            f"- **{ticket.ticket_id}**: {ticket.problem_summary}. "
-            f"Resolution or action: {ticket.solution_summary}"
-            for ticket in result.similar_tickets
-        )
-        tickets_block = f"\n\n---\n**Similar tickets:**\n{ticket_lines}"
-
-    return (
-        f"{result.draft_private_comment}"
-        f"\n\n---\n**Documentation context:**\n{result.docs_answer}"
-        f"{tickets_block}"
-        f"{_format_evidence(getattr(result, 'evidence_notes', []))}"
-        f"{_format_list('Recommended questions', getattr(result, 'recommended_questions', []))}"
-        f"{_format_list('Internal notes', getattr(result, 'internal_notes', []))}"
-        f"{_format_sources('Documentation sources', getattr(result, 'doc_sources', []))}"
-        f"{_format_sources('Ticket sources', getattr(result, 'ticket_sources', []))}"
-        f"\n\n**Confidence:** {result.confidence}"
-    )
-
-
-def _format_evidence(notes: List[Any]) -> str:
-    if not notes:
-        return ""
-    lines = []
-    for note in notes:
-        data = note.model_dump() if hasattr(note, "model_dump") else dict(note)
-        claim = data.get("claim") or ""
-        source_ids = data.get("source_ids") or []
-        comment = data.get("comment") or ""
-        suffix = f" [{', '.join(source_ids)}]" if source_ids else ""
-        if comment:
-            suffix += f" - {comment}"
-        lines.append(f"- {claim}{suffix}")
-    return "\n\n**Обоснование по источникам:**\n" + "\n".join(lines)
-
-
-def _format_sources(title: str, sources: List[Any]) -> str:
-    if not sources:
-        return ""
-    lines = []
-    for source in sources:
-        data = source.model_dump() if hasattr(source, "model_dump") else dict(source)
-        source_id = data.get("source_id") or ""
-        label = data.get("title") or data.get("source_file") or "Источник"
-        source_file = data.get("source_file") or ""
-        url = data.get("url") or ""
-        suffix = f" ({source_file})" if source_file and source_file != label else ""
-        prefix = f"[{source_id}] " if source_id else ""
-        lines.append(f"- {prefix}{label}{suffix}: {url}" if url else f"- {prefix}{label}{suffix}")
-
-        details = []
-        if data.get("equipment_type"):
-            details.append(f"Оборудование: {data['equipment_type']}")
-        if data.get("library_name"):
-            details.append(f"Библиотека: {data['library_name']}")
-        if data.get("release_version"):
-            details.append(f"Релиз: {data['release_version']}")
-        if data.get("breadcrumb"):
-            details.append(f"Раздел: {data['breadcrumb']}")
-        if details:
-            lines.append("  " + " | ".join(details))
-    return f"\n\n**{title}:**\n" + "\n".join(lines)
-
-
-def _format_support_answer(result: Any) -> str:
-    tickets_block = ""
-    if result.similar_tickets:
-        ticket_lines = "\n".join(
-            f"- **{ticket.ticket_id}**: {ticket.problem_summary}. "
-            f"Решение/действие: {ticket.solution_summary}"
-            for ticket in result.similar_tickets
-        )
-        tickets_block = f"\n\n---\n**Похожие обращения:**\n{ticket_lines}"
-
-    internal_notes = getattr(result, "internal_notes", [])
-    return (
-        f"{result.draft_private_comment}"
-        f"\n\n---\n**Информация из документации:**\n{result.docs_answer}"
-        f"{tickets_block}"
-        f"{_format_evidence(getattr(result, 'evidence_notes', []))}"
-        f"{_format_list('Внутренние заметки для инженера', internal_notes)}"
-        f"{_format_sources('Источники документации', getattr(result, 'doc_sources', []))}"
-        f"{_format_sources('Источники похожих обращений', getattr(result, 'ticket_sources', []))}"
-        f"\n\n**Уверенность:** {result.confidence}"
-    )
-
-
 def _to_mapping(value: Any) -> dict:
     if hasattr(value, "model_dump"):
         return value.model_dump()
@@ -456,22 +337,86 @@ def _format_similar_ticket(ticket: Any) -> str:
     return "".join(parts)
 
 
+def _format_docs_answer_text(text: Any) -> str:
+    value = (
+        str(text or "")
+        .strip()
+        .replace("\\r\\n", "\n")
+        .replace("\\n", "\n")
+        .replace("\u00a0", " ")
+        .replace("\u202f", " ")
+    )
+    if not value:
+        return ""
+
+    numbered_items = re.findall(r"(?:^|\s|[;:])\d+\)", value)
+    if len(numbered_items) < 2:
+        return value
+
+    value = re.sub(r":\s*(1\))", r":\n\1", value)
+    value = re.sub(r";\s*(?=\d+\))", "\n", value)
+    value = re.sub(r"(?<!\n)\s+(\d+\))", r"\n\1", value)
+    value = re.sub(r"(?m)^(\d+)\)\s*", r"\1. ", value)
+    return value.strip()
+
 def _format_evidence(notes: List[Any]) -> str:
     if not notes:
         return ""
     lines = []
     for note in notes:
-        data = _to_mapping(note)
+        data = note.model_dump() if hasattr(note, "model_dump") else dict(note)
         claim = data.get("claim") or ""
-        if not claim.strip():
-            continue
         source_ids = data.get("source_ids") or []
         comment = data.get("comment") or ""
         suffix = f" [{', '.join(source_ids)}]" if source_ids else ""
         if comment:
             suffix += f" - {comment}"
         lines.append(f"- {claim}{suffix}")
-    return "\n\n**Обоснование по источникам:**\n" + "\n".join(lines) if lines else ""
+    return "\n\n**Evidence notes:**\n" + "\n".join(lines)
+
+
+def _strip_wiki_recommendation_sections(text: Any) -> str:
+    """Remove support-style recommendation sections from wiki-mode chat output."""
+    value = _format_docs_answer_text(text)
+    if not value:
+        return ""
+
+    recommendation_prefixes = (
+        "рекомендац",
+        "recommended",
+        "recommendations",
+        "что делать",
+        "что проверить",
+        "дальнейшие действия",
+    )
+    section_prefixes = (
+        "что найдено",
+        "похожие",
+        "что не найдено",
+        "not found",
+        "documentation sources",
+        "ticket sources",
+        "источники",
+    )
+
+    output_lines = []
+    skipping = False
+    for line in value.splitlines():
+        normalized = line.strip().strip("#* ").lower()
+        is_recommendation_heading = any(normalized.startswith(prefix) for prefix in recommendation_prefixes)
+        is_next_section = (
+            line.strip() == "---"
+            or any(normalized.startswith(prefix) for prefix in section_prefixes)
+        )
+        if is_recommendation_heading:
+            skipping = True
+            continue
+        if skipping and is_next_section:
+            skipping = False
+        if not skipping:
+            output_lines.append(line)
+
+    return "\n".join(output_lines).strip()
 
 
 def _format_sources(title: str, sources: List[Any]) -> str:
@@ -479,7 +424,7 @@ def _format_sources(title: str, sources: List[Any]) -> str:
         return ""
     lines = []
     for source in sources:
-        data = _to_mapping(source)
+        data = source.model_dump() if hasattr(source, "model_dump") else dict(source)
         source_id = data.get("source_id") or ""
         label = data.get("title") or data.get("source_file") or "Источник"
         source_file = data.get("source_file") or ""
@@ -487,7 +432,6 @@ def _format_sources(title: str, sources: List[Any]) -> str:
         suffix = f" ({source_file})" if source_file and source_file != label else ""
         prefix = f"[{source_id}] " if source_id else ""
         lines.append(f"- {prefix}{label}{suffix}: {url}" if url else f"- {prefix}{label}{suffix}")
-
         details = []
         if data.get("equipment_type"):
             details.append(f"Оборудование: {data['equipment_type']}")
@@ -502,50 +446,65 @@ def _format_sources(title: str, sources: List[Any]) -> str:
     return f"\n\n**{title}:**\n" + "\n".join(lines)
 
 
-def _format_support_answer(result: Any) -> str:
-    tickets = [
-        ticket for ticket in getattr(result, "similar_tickets", [])
-        if _ticket_has_content(ticket)
-    ]
-    tickets_block = ""
-    if tickets:
-        ticket_lines = "\n".join(
-            f"- **{ticket.ticket_id}**: {ticket.problem_summary}. "
-            f"Решение/действие: {ticket.solution_summary}"
-            for ticket in tickets
-        )
-        tickets_block = f"\n\n---\n**Похожие обращения:**\n{ticket_lines}"
+def _format_compact_sources(sources: List[Any], limit: int = 2) -> str:
+    """Render only a short source trail for chat; full SGR evidence stays internal."""
+    items = []
+    for source in sources[:limit]:
+        data = _to_mapping(source)
+        source_id = str(data.get("source_id") or "").strip()
+        title = str(data.get("title") or data.get("source_file") or "Источник").strip()
+        if source_id:
+            items.append(f"[{source_id}] {title}")
+    return "\n\n**Источники:** " + "; ".join(items) if items else ""
 
-    return (
-        f"{result.draft_private_comment}"
-        f"\n\n---\n**Информация из документации:**\n{result.docs_answer}"
-        f"{tickets_block}"
-        f"{_format_evidence(getattr(result, 'evidence_notes', []))}"
-        f"{_format_sources('Источники документации', getattr(result, 'doc_sources', []))}"
-        f"{_format_sources('Источники похожих обращений', getattr(result, 'ticket_sources', []))}"
-        f"\n\n**Уверенность:** {result.confidence}"
+
+def _format_support_answer(result: Any) -> str:
+    """Compact engineer-facing answer; structured SGR fields are kept out of chat."""
+    answer = _format_docs_answer_text(getattr(result, "draft_private_comment", ""))
+    if not answer:
+        answer = _format_docs_answer_text(getattr(result, "docs_answer", ""))
+    if not answer:
+        answer = "В найденных источниках нет подтвержденного ответа на этот вопрос."
+
+    return answer + format_chat_sources_footer(
+        getattr(result, "doc_sources", []),
+        getattr(result, "ticket_sources", []),
     )
 
+def _format_wiki_chat_answer(result: Any) -> str:
+    answer = _strip_wiki_recommendation_sections(getattr(result, "final_answer", ""))
+    if not answer:
+        answer = _format_docs_answer_text(getattr(result, "docs_answer", ""))
+    if not answer:
+        answer = "No direct confirmation was found in retrieved sources."
 
-def _format_support_answer(result: Any) -> str:
+    blocks = [answer]
+
     tickets = [
         ticket for ticket in getattr(result, "similar_tickets", [])
         if _ticket_has_content(ticket)
     ]
-    tickets_block = ""
-    if tickets:
+    if tickets and "Similar historical tickets" not in answer and "\u041f\u043e\u0445\u043e\u0436\u0438\u0435 \u0438\u0441\u0442\u043e\u0440\u0438\u0447\u0435\u0441\u043a\u0438\u0435" not in answer:
         ticket_lines = "\n".join(_format_similar_ticket(ticket) for ticket in tickets)
-        tickets_block = f"\n\n---\n**Похожие обращения:**\n{ticket_lines}"
+        blocks.append(f"---\n**\u041f\u043e\u0445\u043e\u0436\u0438\u0435 \u0438\u0441\u0442\u043e\u0440\u0438\u0447\u0435\u0441\u043a\u0438\u0435 \u043e\u0431\u0440\u0430\u0449\u0435\u043d\u0438\u044f:**\n{ticket_lines}")
 
-    return (
-        f"{result.draft_private_comment}"
-        f"\n\n---\n**Информация из документации:**\n{result.docs_answer}"
-        f"{tickets_block}"
-        f"{_format_evidence(getattr(result, 'evidence_notes', []))}"
-        f"{_format_sources('Источники документации', getattr(result, 'doc_sources', []))}"
-        f"{_format_sources('Источники похожих обращений', getattr(result, 'ticket_sources', []))}"
-        f"\n\n**Уверенность:** {result.confidence}"
-    )
+    limitations = [str(item).strip() for item in getattr(result, "source_limitations", []) if str(item).strip()]
+    missing_context = (getattr(result, "missing_context", "") or "").strip()
+    if (limitations or missing_context) and "Not found in retrieved sources" not in answer and "\u0427\u0442\u043e \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u043e" not in answer:
+        lines = []
+        if missing_context:
+            lines.append(f"- {missing_context}")
+        lines.extend(f"- {item}" for item in limitations)
+        blocks.append("---\n**\u0427\u0442\u043e \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u043e \u0432 \u043f\u043e\u043b\u0443\u0447\u0435\u043d\u043d\u044b\u0445 \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u0430\u0445:**\n" + "\n".join(lines))
+
+    sources = (
+        _format_sources("\u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u0438 \u0434\u043e\u043a\u0443\u043c\u0435\u043d\u0442\u0430\u0446\u0438\u0438", getattr(result, "doc_sources", []))
+        + _format_sources("\u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u0438 \u043f\u043e\u0445\u043e\u0436\u0438\u0445 \u043e\u0431\u0440\u0430\u0449\u0435\u043d\u0438\u0439", getattr(result, "ticket_sources", []))
+    ).strip()
+    if sources:
+        blocks.append("---\n" + sources)
+
+    return "\n\n".join(block for block in blocks if block.strip())
 
 
 def _format_ticket_search_answer(query: str, results: List[Dict[str, Any]]) -> str:
@@ -934,7 +893,7 @@ async def ready(request: Request) -> dict:
                 "error": getattr(request.app.state, "startup_error", None) or "RAG engine is not initialized",
             },
         )
-    return {"status": "ready", "model": MODEL_ID}
+    return {"status": "ready", "model": DEEP_MODEL_ID}
 
 
 @app.post("/api/v1/analyze_ticket", response_model=TicketResponse)
@@ -965,7 +924,7 @@ async def analyze_ticket(request: Request, payload: TicketRequest) -> TicketResp
             draft_private_comment=result.draft_private_comment,
             confidence=result.confidence,
             final_answer=result.draft_private_comment,
-            extracted_facts=[f"Documentation: {result.docs_answer}"],
+            extracted_facts=[f"Documentation: {_format_docs_answer_text(result.docs_answer)}"],
         )
     except ValueError as exc:
         log.warning(
@@ -993,25 +952,14 @@ async def list_models() -> dict:
     created = int(time.time())
     models = [
         (
-            MODEL_ID,
-            "RegLab AI: fast support assistant without reranker, lower latency and token use",
-        ),
-        (
             DEEP_MODEL_ID,
-            "RegLab AI Deep: reranker enabled with moderate context for harder questions",
+            "RegLab AI Deep: maximum ticket-search quality with full reranking",
         ),
         (
-            EVA_ARTICLE_MODEL_ID,
-            "RegLab EVA Article: knowledge-base article draft with tags and sources",
+            ADAPTIVE_MODEL_ID,
+            "RegLab AI Adaptive: fast documentation search and adaptive ticket reranking for incidents",
         ),
     ]
-    if TicketVectorSearch is not None:
-        models.append(
-            (
-                TICKET_SEARCH_MODEL_ID,
-                "RegLab Ticket Search: ranked lookup over filtered support tickets by error code or symptom",
-            )
-        )
     return {
         "object": "list",
         "data": [
@@ -1041,6 +989,10 @@ async def chat_completions(request: Request, payload: ChatCompletionRequest) -> 
     if not query:
         raise _safe_http_error("User message is empty", status.HTTP_400_BAD_REQUEST, request_id)
 
+    known_models = set(MODEL_PROFILES)
+    if payload.model not in known_models:
+        raise _safe_http_error("Unknown model", status.HTTP_404_NOT_FOUND, request_id)
+
     try:
         if payload.model == TICKET_SEARCH_MODEL_ID:
             log.info(
@@ -1053,6 +1005,23 @@ async def chat_completions(request: Request, payload: ChatCompletionRequest) -> 
                 return await _ticket_search_completion(request, payload, request_id, query)
 
         engine = await _get_engine_for_model(request, payload.model)
+        if payload.model in (CHAT_MODEL_ID, CHAT_DEEP_MODEL_ID):
+            log.info(
+                "Wiki chat completion request request_id=%s model=%s profile=%s query=%r messages_count=%d",
+                request_id,
+                payload.model,
+                _profile_from_model(payload.model),
+                query[:120],
+                len(payload.messages),
+            )
+            # OpenWebUI may submit the full transcript. The RAG API is
+            # intentionally stateless: only the latest user question is sent
+            # to the engine, and no prior assistant/user text can affect it.
+            raw_messages = [{"role": "user", "content": query}]
+            async with request.app.state.inference_semaphore:
+                result = await run_in_threadpool(engine.process_wiki_chat_dialog, raw_messages)
+            full_answer = _format_wiki_chat_answer(result)
+            return await _chat_answer_completion(payload, request_id, query, full_answer)
         if payload.model == EVA_ARTICLE_MODEL_ID:
             log.info(
                 "EVA article request request_id=%s model=%s profile=%s query=%r",

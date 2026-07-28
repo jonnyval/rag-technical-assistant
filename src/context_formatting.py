@@ -222,3 +222,36 @@ def format_source_references(sources: List[SourceReference]) -> str:
             f"[{source.source_id}] {source.title} | file={source.source_file} | url={location}{detail_suffix}"
         )
     return "\n".join(lines)
+
+
+def format_chat_sources_footer(
+    doc_sources: List[SourceReference],
+    ticket_sources: List[SourceReference],
+) -> str:
+    """Форматирует списки источников в виде красивого Markdown-блока для OpenWebUI."""
+    blocks = []
+
+    if doc_sources:
+        doc_lines = ["\n\n---\n**📚 Источники документации:**"]
+        for source in doc_sources:
+            label = source.title or source.page_title or source.source_file
+            file_hint = f" (`{source.source_file}`)" if source.source_file else ""
+            if source.url:
+                doc_lines.append(f"- **[{source.source_id}]** [{label}]({source.url}){file_hint}")
+            else:
+                doc_lines.append(f"- **[{source.source_id}]** {label}{file_hint}")
+        blocks.append("\n".join(doc_lines))
+
+    if ticket_sources:
+        ticket_lines = ["\n\n**🎫 Похожие обращения техподдержки:**"]
+        for source in ticket_sources:
+            label = source.title or source.source_file
+            file_hint = f" (`{source.source_file}`)" if source.source_file else ""
+            if source.url:
+                ticket_lines.append(f"- **[{source.source_id}]** [{label}]({source.url}){file_hint}")
+            else:
+                ticket_lines.append(f"- **[{source.source_id}]** {label}{file_hint}")
+        blocks.append("\n".join(ticket_lines))
+
+    return "".join(blocks)
+

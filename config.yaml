@@ -28,7 +28,7 @@ providers:
       
       # ===== GEMINI (Мощная, поддерживает function_calling) =====
       gemini:
-        model: "gemini-2.5-flash"
+        model: "gemini-3.5-flash" #gemma-4-26b-a4b-it , gemini-2.5-flash
         api_keys: "${GOOGLE_API_KEYS}"  # Загружается из .env
         description: "Google Gemini - мощная и быстрая"
       
@@ -191,6 +191,19 @@ rag_profiles:
     top_k_final: 4
     rerank_threshold: 0.05
     use_litm: true
+  chat:
+    use_reranker: false
+    top_k_retrieval: 12
+    top_k_final: 3
+    rerank_threshold: 0.05
+    use_litm: false
+  chat_deep:
+    use_reranker: true
+    top_k_retrieval: 20
+    top_k_final: 4
+    rerank_threshold: 0.05
+    use_litm: true
+
 
 applications:
   # ===== QA система (основное приложение) =====
