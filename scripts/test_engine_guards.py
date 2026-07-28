@@ -11,7 +11,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.context_formatting import SourceReference
 from src.engine import RAGEngine, RoundRobinFallbackRunnable
-from src.evidence_guard import apply_response_provenance, apply_transformation_evidence_guard
+from src.evidence_guard import (
+    apply_response_provenance, apply_transformation_evidence_guard,
+    apply_entity_coverage_guard, apply_diagnostic_scope_guard,
+    filter_documents_by_requested_series,
+)
 
 
 def test_product_filter_keeps_exact_series() -> None:
@@ -65,6 +69,22 @@ def test_ascii_transformation_guard_rejects_lookalike_api() -> None:
     assert "нет прямого подтверждения" in result.draft_private_comment
     assert result.confidence == "low"
 
+
+def test_series_filter_drops_r500_for_r400_request() -> None:
+    r400 = SimpleNamespace(metadata={"equipment_type": "R400"}, page_content="R400 service mode")
+    r500 = SimpleNamespace(metadata={"equipment_type": "R500"}, page_content="R500 reset")
+    result = filter_documents_by_requested_series("как сделать сброс R400?", [r400, r500])
+    assert result == [r400]
+
+
+def test_entity_and_diagnostic_guards_require_direct_scope() -> None:
+    response = SimpleNamespace(docs_answer="R500 details", draft_private_comment="R500 details", evidence_notes=[], confidence="high")
+    result = apply_entity_coverage_guard(response, "чем отличается R400 от R500?", "source about R500 only")
+    assert "R400" in result.draft_private_comment and result.confidence == "low"
+
+    response = SimpleNamespace(docs_answer="generic", draft_private_comment="generic", evidence_notes=[], confidence="high")
+    result = apply_diagnostic_scope_guard(response, "ошибка self-diagnostic что делать?", "general runtime guide")
+    assert "точный текст сообщения" in result.draft_private_comment and result.confidence == "low"
 def test_retry_policy_does_not_repeat_schema_errors() -> None:
     assert RoundRobinFallbackRunnable._failure_policy(RuntimeError("503 UNAVAILABLE")) == (True, 30.0)
     assert RoundRobinFallbackRunnable._failure_policy(RuntimeError("404 NOT_FOUND")) == (True, 900.0)
@@ -75,5 +95,7 @@ if __name__ == "__main__":
     test_product_filter_keeps_exact_series()
     test_provenance_removes_unknown_sources()
     test_ascii_transformation_guard_rejects_lookalike_api()
+    test_series_filter_drops_r500_for_r400_request()
+    test_entity_and_diagnostic_guards_require_direct_scope()
     test_retry_policy_does_not_repeat_schema_errors()
     print("Engine guard regression checks: OK")

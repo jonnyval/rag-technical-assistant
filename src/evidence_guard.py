@@ -354,3 +354,82 @@ def apply_transformation_evidence_guard(
     response.evidence_notes = []
     response.confidence = "low"
     return response
+
+def filter_documents_by_requested_series(query: str, documents: List[Any]) -> List[Any]:
+    """Drop sources that explicitly describe another R-series controller.
+
+    Generic sources without a model marker are kept. A comparison query may keep
+    sources for any of the requested models, but never for a third model.
+    """
+    requested = {item.upper() for item in re.findall(r"\bR\d{3}S?\b", query or "", flags=re.IGNORECASE)}
+    if not requested:
+        return documents
+
+    result = []
+    for document in documents or []:
+        meta = getattr(document, "metadata", {}) or {}
+        source_text = " ".join([
+            str(meta.get("equipment_type") or ""),
+            str(meta.get("source_file") or ""),
+            str(meta.get("page_title") or ""),
+            str(meta.get("breadcrumb_raw") or ""),
+            str(getattr(document, "page_content", "") or "")[:6000],
+        ])
+        source_series = {item.upper() for item in re.findall(r"\bR\d{3}S?\b", source_text, flags=re.IGNORECASE)}
+        if source_series and not (source_series & requested):
+            log.info("EvidenceGuard: dropped cross-series source %s for requested=%s", source_series, requested)
+            continue
+        result.append(document)
+    return result
+
+
+def apply_entity_coverage_guard(
+    response: Any,
+    query: str,
+    docs_context: str,
+) -> Any:
+    """Prevent controller/module cards and comparisons from one-sided evidence."""
+    query_norm = (query or "").lower().replace("ё", "е")
+    requested = {item.upper() for item in re.findall(r"\bR\d{3}S?\b", query or "", flags=re.IGNORECASE)}
+    asks_description = any(marker in query_norm for marker in (
+        "что такое", "что это", "чем отличается", "разница", "расскажи", "характерист",
+    ))
+    if not requested or not asks_description:
+        return response
+
+    context_series = {item.upper() for item in re.findall(r"\bR\d{3}S?\b", docs_context or "", flags=re.IGNORECASE)}
+    missing = sorted(requested - context_series)
+    if not missing:
+        return response
+
+    answer = (
+        "В найденной документации нет прямого описания: " + ", ".join(missing) + ". "
+        "Нельзя строить карточку или сравнение контроллеров по документам о другой серии, "
+        "модулях шасси либо отдельной функции."
+    )
+    response.docs_answer = answer
+    response.draft_private_comment = answer
+    response.evidence_notes = []
+    response.confidence = "low"
+    return response
+
+
+def apply_diagnostic_scope_guard(response: Any, query: str, docs_context: str) -> Any:
+    """Avoid generic root-cause lists for self-diagnostic requests without evidence."""
+    query_norm = (query or "").lower().replace("ё", "е")
+    context_norm = (docs_context or "").lower().replace("ё", "е")
+    asks_self_diagnostic = "самодиагност" in query_norm or "self-diagnostic" in query_norm
+    has_direct_evidence = "самодиагност" in context_norm or "self-diagnostic" in context_norm
+    if not asks_self_diagnostic or has_direct_evidence:
+        return response
+
+    answer = (
+        "В найденных источниках нет прямого описания причин сообщения self-diagnostic. "
+        "Для предметного разбора нужны точный текст сообщения, модель контроллера и фрагмент журнала; "
+        "без них не следует отключать проверки или менять системные параметры."
+    )
+    response.docs_answer = answer
+    response.draft_private_comment = answer
+    response.evidence_notes = []
+    response.confidence = "low"
+    return response

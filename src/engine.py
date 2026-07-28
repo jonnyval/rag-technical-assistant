@@ -31,6 +31,9 @@ from src.evidence_guard import (
     apply_entity_citation_guard,
     apply_response_provenance,
     apply_transformation_evidence_guard,
+    apply_entity_coverage_guard,
+    apply_diagnostic_scope_guard,
+    filter_documents_by_requested_series,
     check_and_format_equipment_mismatch_warning,
     strict_evidence_context,
 )
@@ -637,6 +640,7 @@ class RAGEngine:
 - Не выводи новое правило из разрозненных фрагментов и не переносись между разными моделями/сериями без явной совместимости в источнике.
 - Для функций, библиотек и преобразований проверь совпадение действия целиком: экранирование строки, кодировка, символьное представление и массив кодов — разные операции. Не подменяй одну другой по похожему имени функции.
 - Для ошибки, самодиагностики, параметра конфигурации или отключения проверки сначала укажи условие применимости. Изменение системного параметра можно описывать только как подтверждённый сценарий для той же причины, а не как универсальное решение.
+- Для широкого вопроса о серии контроллеров перечисляй только свойства, прямо относящиеся к этой серии в источнике. Не превращай документацию о модуле, функции или иной серии в описание контроллера.
 
 ФОРМАТ ОТВЕТА:
 - Сначала определи тип вопроса. На справочный вопрос ответь кратким определением или перечнем возможностей. Нумерованные шаги используй только для явно запрошенной процедуры.
@@ -1025,6 +1029,9 @@ User question:
                     limit=4 if (ticket_quality_mode or adaptive_mode) else 2,
                 )
 
+            docs = filter_documents_by_requested_series(query, docs)
+            tickets = filter_documents_by_requested_series(query, tickets)
+
             # Remove incompatible product-family sources before they reach the LLM. The guard remains as a diagnostic fallback.
             docs = self._filter_wiki_docs_by_requested_product(query, detected_modules, docs)
             tickets = self._filter_wiki_docs_by_requested_product(query, detected_modules, tickets)
@@ -1062,6 +1069,8 @@ User question:
             })
             response = apply_definition_guard(response, query, docs_context, doc_sources)
             response = apply_transformation_evidence_guard(response, query, docs_context, doc_sources)
+            response = apply_entity_coverage_guard(response, query, docs_context)
+            response = apply_diagnostic_scope_guard(response, query, docs_context)
             response, doc_sources, ticket_sources = apply_response_provenance(
                 response, doc_sources, ticket_sources
             )
