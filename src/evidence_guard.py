@@ -315,3 +315,42 @@ def apply_response_provenance(
     used_docs = [source for source in doc_sources if source.source_id.upper() in cited_ids]
     used_tickets = [source for source in ticket_sources if source.source_id.upper() in cited_ids]
     return response, used_docs, used_tickets
+
+
+def apply_transformation_evidence_guard(
+    response: Any,
+    query: str,
+    docs_context: str,
+    doc_sources: List[SourceReference],
+) -> Any:
+    """Reject look-alike APIs when a representation conversion is not evidenced."""
+    query_norm = (query or "").lower().replace("ё", "е")
+    context_norm = (docs_context or "").lower().replace("ё", "е")
+    asks_ascii_conversion = "ascii" in query_norm and any(
+        marker in query_norm for marker in ("преобраз", "код", "набор", "массив")
+    )
+    if not asks_ascii_conversion:
+        return response
+
+    has_direct_evidence = "ascii" in context_norm and any(
+        marker in context_norm for marker in ("код", "code", "символ", "string", "строк")
+    )
+    if has_direct_evidence:
+        return response
+
+    source_hint = ""
+    if doc_sources:
+        source_hint = " В просмотренных фрагментах: " + ", ".join(
+            f"[{source.source_id}]" for source in doc_sources[:3]
+        ) + "."
+    answer = (
+        "В найденной документации нет прямого подтверждения преобразования строки "
+        "в массив ASCII-кодов. Похожие функции экранирования, работы с SQL-строкой "
+        "или общими строками не являются доказательством такого преобразования."
+        + source_hint
+    )
+    response.docs_answer = answer
+    response.draft_private_comment = answer
+    response.evidence_notes = []
+    response.confidence = "low"
+    return response

@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.context_formatting import SourceReference
 from src.engine import RAGEngine, RoundRobinFallbackRunnable
-from src.evidence_guard import apply_response_provenance
+from src.evidence_guard import apply_response_provenance, apply_transformation_evidence_guard
 
 
 def test_product_filter_keeps_exact_series() -> None:
@@ -48,6 +48,23 @@ def test_provenance_removes_unknown_sources() -> None:
 
 
 
+
+def test_ascii_transformation_guard_rejects_lookalike_api() -> None:
+    response = SimpleNamespace(
+        docs_answer="EscapeString решает задачу.",
+        draft_private_comment="Используйте EscapeString.",
+        evidence_notes=[],
+        confidence="high",
+    )
+    result = apply_transformation_evidence_guard(
+        response,
+        "преобразование строки в набор ASCII кодов",
+        "В документации описана функция EscapeString для SQL-строки.",
+        [SourceReference(source_id="D1", title="functions", source_file="guide.docx")],
+    )
+    assert "нет прямого подтверждения" in result.draft_private_comment
+    assert result.confidence == "low"
+
 def test_retry_policy_does_not_repeat_schema_errors() -> None:
     assert RoundRobinFallbackRunnable._failure_policy(RuntimeError("503 UNAVAILABLE")) == (True, 30.0)
     assert RoundRobinFallbackRunnable._failure_policy(RuntimeError("404 NOT_FOUND")) == (True, 900.0)
@@ -57,5 +74,6 @@ def test_retry_policy_does_not_repeat_schema_errors() -> None:
 if __name__ == "__main__":
     test_product_filter_keeps_exact_series()
     test_provenance_removes_unknown_sources()
+    test_ascii_transformation_guard_rejects_lookalike_api()
     test_retry_policy_does_not_repeat_schema_errors()
     print("Engine guard regression checks: OK")
