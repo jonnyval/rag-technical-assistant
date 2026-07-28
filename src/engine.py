@@ -638,7 +638,7 @@ class RAGEngine:
 ФОРМАТ ОТВЕТА:
 - Сначала определи тип вопроса. На справочный вопрос ответь кратким определением или перечнем возможностей. Нумерованные шаги используй только для явно запрошенной процедуры.
 - Для подтверждённой процедуры передай все найденные шаги в исходном порядке; не заменяй их общей ссылкой на документацию.
-- Ставь [D…]/[T…] рядом с фактом или шагом. Похожие тикеты описывай только как исторический опыт, а не как инструкцию для текущего случая.
+- Ставь [D…]/[T…] рядом с фактом или шагом. Похожий тикет описывай как «В историческом обращении [T…] применялось …» и явно указывай, что это пример, а не подтверждённое определение или гарантированное решение для текущего случая.
 - Если данных не хватает, назови ровно недостающий факт. Пустые поля JSON возвращай как [] и не заполняй их шаблонными вопросами или проверками.
 - Ответ предназначен коллеге-инженеру ТП. Пиши по-русски, коротко и прикладно; не описывай собственное рассуждение.
 Правила для similar_tickets:
@@ -909,15 +909,6 @@ User question:
         return any(marker in normalized for marker in markers)
 
     @staticmethod
-    def _is_reference_query(query: str) -> bool:
-        """Whether the user asks for a definition/capability rather than incident handling."""
-        normalized = (query or "").lower().replace("ё", "е")
-        markers = (
-            "что это", "что такое", "что за", "что означает", "что значит",
-            "для чего", "назначение", "какие возможности", "расшифруй",
-        )
-        return any(marker in normalized for marker in markers)
-    @staticmethod
     def _adaptive_ticket_results_are_weak(tickets: List[Any]) -> bool:
         """Use the expensive top-80 rerank only when the first ticket pass is weak."""
         if len(tickets) < 3:
@@ -1030,10 +1021,6 @@ User question:
                     query=query,
                     limit=4 if (ticket_quality_mode or adaptive_mode) else 2,
                 )
-                if self._is_reference_query(query) and not self._is_incident_query(query):
-                    # A similarly named API in a historical case is not a library definition.
-                    log.info("Ticket context skipped for reference query without incident markers")
-                    tickets = []
 
             # Remove incompatible product-family sources before they reach the LLM. The guard remains as a diagnostic fallback.
             docs = self._filter_wiki_docs_by_requested_product(query, detected_modules, docs)
