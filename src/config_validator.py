@@ -134,6 +134,8 @@ class RetrievalConfig(BaseModel):
     use_reranker: bool = Field(True, description="Загружать и использовать реранкер")
     use_litm: bool = Field(True, description="Использовать LLM для итеративной трансформации")
     use_hyde: bool = Field(False, description="Использовать HyDE")
+    multi_query: Dict[str, Any] = Field(default_factory=dict, description="Настройки Multi-Query / RAG-Fusion")
+    diagnostic_sgr: Dict[str, Any] = Field(default_factory=dict, description="Настройки диагностического SGR")
     chunking: Dict[str, Any] = Field(..., description="Параметры чанкинга")
 
 

@@ -236,7 +236,26 @@ class Settings:
     def use_hyde(self) -> bool:
         """Использовать HyDE"""
         return self._raw_config.get("retrieval", {}).get("use_hyde", False)
+
+    @property
+    def multi_query_config(self) -> Dict[str, Any]:
+        """Параметры RAG-Fusion / Multi-Query retrieval."""
+        config = self._raw_config.get("retrieval", {}).get("multi_query", {})
+        return config if isinstance(config, dict) else {}
+
+    @property
+    def multi_query_enabled(self) -> bool:
+        return bool(self.multi_query_config.get("enabled", False))
     
+    @property
+    def diagnostic_sgr_config(self) -> Dict[str, Any]:
+        config = self._raw_config.get("retrieval", {}).get("diagnostic_sgr", {})
+        return config if isinstance(config, dict) else {}
+
+    @property
+    def diagnostic_sgr_enabled(self) -> bool:
+        return bool(self.diagnostic_sgr_config.get("enabled", False))
+
     # ===== ЧАНКИНГ =====
     @property
     def child_chunk_size(self) -> int:

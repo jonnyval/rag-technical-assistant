@@ -268,6 +268,27 @@ class WikiChatResponse(BaseModel):
         return str(value)
 
 
+class MultiQueryPlan(BaseModel):
+    """Short retrieval-only alternatives generated before RAG-Fusion."""
+
+    queries: List[str] = Field(default_factory=list, description="Up to two additional short search queries")
+
+    @field_validator("queries", mode="before")
+    @classmethod
+    def normalize_queries(cls, value):
+        if value is None:
+            return []
+        values = value if isinstance(value, list) else [value]
+        result = []
+        seen = set()
+        for item in values:
+            text = " ".join(str(item or "").split()).strip()
+            key = text.lower()
+            if text and key not in seen:
+                seen.add(key)
+                result.append(text)
+        return result
+
 class RetrievalReflection(BaseModel):
     """Internal decision about whether wiki retrieval needs more focused searches."""
 
@@ -412,7 +433,7 @@ class RAGEngine:
                 self.profile_config["top_k_final"],
                 self.profile_config["use_reranker"],
             )
-            self.retriever, self.sgr_chain, self.support_chain, self.chat_chain, self.retrieval_reflection_chain = self._build_pipeline()
+            self.retriever, self.sgr_chain, self.support_chain, self.chat_chain, self.retrieval_reflection_chain, self.multi_query_chain = self._build_pipeline()
             self._last_docs: List = []
             log.info("✅ RAGEngine успешно инициализирован.")
         except Exception as e:
@@ -898,7 +919,42 @@ User question:
             retrieval_reflection_chain = reflection_prompt_template | reflection_structured_llm
             log.debug("Wiki retrieval reflection chain built")
 
-            return retriever, sgr_chain, support_chain, chat_chain, retrieval_reflection_chain
+            multi_query_chain = None
+            if settings.multi_query_enabled:
+                multi_query_prompt = ChatPromptTemplate.from_template("""
+You generate additional search queries for a RegLab technical-support RAG system.
+Do not answer the user and do not diagnose the issue. Return JSON matching MultiQueryPlan.
+
+Create at most {max_queries} short query variants that may retrieve documentation or historical tickets missed by the original wording.
+Rules:
+- The original query is already searched; never repeat it.
+- Preserve exact model names, module codes, error text, paths, commands and versions from the original query.
+- Do not invent error codes, product models, menu paths, causes or solutions.
+- Prefer alternative domain wording, symptom wording and exact technical terms.
+- Russian is preferred; keep established English technical tokens unchanged.
+
+Original query:
+{input}
+
+Detected module context:
+{module_context}
+""")
+                if settings.active_llm == "gigachat":
+                    expansion_llms = [candidate.with_structured_output(MultiQueryPlan) for candidate in llm_candidates]
+                else:
+                    expansion_llms = [
+                        candidate.with_structured_output(MultiQueryPlan, method="json_mode")
+                        for candidate in llm_candidates
+                    ]
+                expansion_llm = (
+                    RoundRobinFallbackRunnable(expansion_llms, label="Multi-Query LLM")
+                    if len(expansion_llms) > 1
+                    else expansion_llms[0]
+                )
+                multi_query_chain = multi_query_prompt | expansion_llm
+                log.info("Multi-Query RAG-Fusion is enabled")
+
+            return retriever, sgr_chain, support_chain, chat_chain, retrieval_reflection_chain, multi_query_chain
 
         except Exception as e:
             log.error(f"❌ Ошибка при построении pipeline: {e}", exc_info=True)
@@ -925,6 +981,67 @@ User question:
             for ticket in tickets
         ]
         return not scores or max(scores) < 0.65
+    @staticmethod
+    def _multi_query_options() -> tuple[int, int]:
+        config = settings.multi_query_config
+        try:
+            rrf_k = max(1, int(config.get("rrf_k", 60)))
+            candidate_limit = max(1, int(config.get("max_candidates", 60)))
+        except (TypeError, ValueError):
+            return 60, 60
+        return rrf_k, candidate_limit
+
+    def _build_multi_query_searches(self, query: str, retrieval_query: str, detected_modules: List[Dict[str, Any]], module_context: str) -> List[str]:
+        """Keep the original search and add bounded, validated LLM variants."""
+        if not settings.multi_query_enabled or self.multi_query_chain is None:
+            return [retrieval_query]
+        try:
+            max_queries = max(0, min(int(settings.multi_query_config.get("max_generated_queries", 2)), 3))
+        except (TypeError, ValueError):
+            max_queries = 2
+        if not max_queries:
+            return [retrieval_query]
+        try:
+            plan = self.multi_query_chain.invoke({
+                "input": query,
+                "module_context": module_context or "No module was detected.",
+                "max_queries": max_queries,
+            })
+        except Exception as error:
+            log.warning("Multi-Query generation failed; using original search only: %s", error)
+            return [retrieval_query]
+
+        requested_series = {item.upper() for item in re.findall(r"\bR\d{3}S?\b", query, flags=re.IGNORECASE)}
+        searches = [retrieval_query]
+        seen = {re.sub(r"\W+", "", retrieval_query.lower())}
+        for variant in (getattr(plan, "queries", None) or [])[:max_queries]:
+            variant = " ".join(str(variant).split()).strip()
+            if not variant or len(variant) > 360:
+                continue
+            variant_series = {item.upper() for item in re.findall(r"\bR\d{3}S?\b", variant, flags=re.IGNORECASE)}
+            if requested_series and not requested_series.issubset(variant_series):
+                variant = f"{variant} {' '.join(sorted(requested_series))}"
+            focused_query = build_module_enriched_query(variant, detected_modules)
+            key = re.sub(r"\W+", "", focused_query.lower())
+            if len(key) < 4 or key in seen:
+                continue
+            seen.add(key)
+            searches.append(focused_query)
+        if len(searches) > 1:
+            log.info("Multi-Query RAG-Fusion: %s search variants", len(searches))
+        return searches
+
+    def _retrieve_docs_for_queries(self, queries: List[str], retrieval_query: str, *, use_reranker: bool) -> List:
+        if len(queries) <= 1:
+            return self.retriever.retrieve_docs(retrieval_query, use_reranker=use_reranker)
+        rrf_k, candidate_limit = self._multi_query_options()
+        return self.retriever.retrieve_docs_multi_query(queries, rerank_query=retrieval_query, use_reranker=use_reranker, rrf_k=rrf_k, candidate_limit=candidate_limit)
+
+    def _retrieve_tickets_for_queries(self, queries: List[str], retrieval_query: str, *, final_limit: int | None, child_k: int | None, use_reranker: bool) -> List:
+        if len(queries) <= 1:
+            return self.retriever.retrieve_tickets(retrieval_query, final_limit=final_limit, child_k=child_k, use_reranker=use_reranker)
+        rrf_k, candidate_limit = self._multi_query_options()
+        return self.retriever.retrieve_tickets_multi_query(queries, rerank_query=retrieval_query, final_limit=final_limit, child_k=child_k, use_reranker=use_reranker, rrf_k=rrf_k, candidate_limit=max(candidate_limit, child_k or 0))
     def process_support_ticket(self, query: str) -> SupportPrivateResponse:
         """Builds a private support hint with separate docs and ticket retrieval."""
         if not query:
@@ -964,9 +1081,19 @@ User question:
                 )
             adaptive_mode = self.profile == "adaptive"
             adaptive_incident = adaptive_mode and self._is_incident_query(query)
+            retrieval_queries = self._build_multi_query_searches(
+                query,
+                retrieval_query,
+                detected_modules,
+                module_context,
+            )
             docs = merge_documents(
                 exact_module_docs,
-                self.retriever.retrieve_docs(retrieval_query, use_reranker=not adaptive_mode),
+                self._retrieve_docs_for_queries(
+                    retrieval_queries,
+                    retrieval_query,
+                    use_reranker=not adaptive_mode,
+                ),
             )
             if settings.second_db_name == settings.active_db_name:
                 log.warning(
@@ -992,7 +1119,8 @@ User question:
                 initial_ticket_k = 30 if adaptive_incident else (80 if ticket_quality_mode or detected_modules else None)
                 initial_ticket_limit = 4 if adaptive_mode else (8 if ticket_quality_mode else (12 if detected_modules else 2))
                 ticket_candidates = [
-                    doc for doc in self.retriever.retrieve_tickets(
+                    doc for doc in self._retrieve_tickets_for_queries(
+                        retrieval_queries,
                         retrieval_query,
                         final_limit=initial_ticket_limit,
                         child_k=initial_ticket_k,
@@ -1003,7 +1131,8 @@ User question:
                 if adaptive_incident and self._adaptive_ticket_results_are_weak(ticket_candidates):
                     log.info("Adaptive ticket search is weak; expanding rerank pool from 30 to 80 chunks")
                     ticket_candidates = [
-                        doc for doc in self.retriever.retrieve_tickets(
+                        doc for doc in self._retrieve_tickets_for_queries(
+                            retrieval_queries,
                             retrieval_query,
                             final_limit=8,
                             child_k=80,
@@ -1057,9 +1186,30 @@ User question:
                 len(ticket_sources),
             )
 
+            diagnostic_plan_context = "No diagnostic planning was required."
+            if settings.diagnostic_sgr_enabled and self._is_incident_query(query):
+                try:
+                    reflection = self.retrieval_reflection_chain.invoke({
+                        "input": query,
+                        "chat_history": "No previous chat history.",
+                        "module_context": module_context or "No module was detected.",
+                        "already_tried_queries": "\n".join(retrieval_queries),
+                        "docs_context": docs_context[:WIKI_REFLECTION_DOCS_MAX_CHARS],
+                        "tickets_context": tickets_context[:WIKI_REFLECTION_TICKETS_MAX_CHARS],
+                    })
+                    mode = "direct documented answer" if reflection.enough_context else "evidence-bounded diagnostic hypotheses"
+                    diagnostic_plan_context = (
+                        f"Diagnostic SGR mode: {mode}.\n"
+                        f"Missing facts: {'; '.join(reflection.missing_facts[:3]) or 'none recorded'}.\n"
+                        f"Source risks: {'; '.join(reflection.source_risks[:3]) or 'none recorded'}.\n"
+                        "Separate direct evidence from hypotheses; do not add generic checklists."
+                    )
+                except Exception as error:
+                    log.warning("Diagnostic SGR failed; continuing with initial evidence: %s", error)
+
             response = self.support_chain.invoke({
                 "input": query,
-                "strict_evidence_context": strict_evidence_context(query),
+                "strict_evidence_context": strict_evidence_context(query) + "\n\n" + diagnostic_plan_context,
                 "equipment_mismatch_context": check_and_format_equipment_mismatch_warning(query, doc_sources),
                 "module_context": module_context,
                 "docs_context": docs_context,

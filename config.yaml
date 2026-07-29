@@ -170,6 +170,17 @@ retrieval:
   use_reranker: true      # Загружать и использовать реранкер (false = выключить, использовать порядок векторного скора)
   use_litm: true           # Использовать Lost-in-the-Middle сортировку
   use_hyde: false          # Использовать HyDE (Hypothetical Document Embeddings)
+  multi_query:
+    # RAG-Fusion: исходный запрос + варианты от LLM, RRF-слияние, затем один реранкер.
+    # Выключено по умолчанию: включает LLM-вызов и до 2 дополнительных поисков в каждую БД.
+    enabled: true
+    max_generated_queries: 2
+    rrf_k: 60
+    max_candidates: 60
+  diagnostic_sgr:
+    # Второй SGR-этап только для диагностических вопросов: оценивает доказательства и при необходимости уточняет поиск.
+    enabled: true
+    max_followup_queries: 2
   
   # Параметры чанкинга (Parent-Child)
   chunking:

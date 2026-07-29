@@ -223,6 +223,99 @@ class DualRetriever(BaseRetriever):
                 break
         return result
 
+    @staticmethod
+    def _multi_query_child_key(document: Document) -> tuple:
+        """Stable key for a child chunk returned by several query variants."""
+        metadata = document.metadata if hasattr(document, "metadata") else {}
+        return (
+            metadata.get("db_source"),
+            metadata.get("doc_id") or metadata.get("ticket_id") or metadata.get("source_file"),
+            document.page_content,
+        )
+
+    def _fuse_multi_query_children(
+        self,
+        query_results: List[List[Document]],
+        *,
+        rrf_k: int,
+        candidate_limit: int,
+    ) -> List[Document]:
+        """Fuse ranked vector-search lists with Reciprocal Rank Fusion."""
+        fused: Dict[tuple, Document] = {}
+        scores: Dict[tuple, float] = {}
+        for result in query_results:
+            for rank, document in enumerate(result, start=1):
+                key = self._multi_query_child_key(document)
+                fused.setdefault(key, document)
+                scores[key] = scores.get(key, 0.0) + 1.0 / (rrf_k + rank)
+
+        ordered = sorted(fused, key=lambda key: scores[key], reverse=True)[:candidate_limit]
+        children = [fused[key] for key in ordered]
+        for key, child in zip(ordered, children):
+            child.metadata["fusion_score"] = scores[key]
+        return children
+
+    def retrieve_docs_multi_query(
+        self,
+        queries: List[str],
+        *,
+        rerank_query: str,
+        use_reranker: bool = True,
+        rrf_k: int = 60,
+        candidate_limit: int = 60,
+    ) -> List[Document]:
+        """RAG-Fusion over documentation, followed by one shared rerank pass."""
+        unique_queries = list(dict.fromkeys(query.strip() for query in queries if query and query.strip()))
+        if len(unique_queries) <= 1:
+            return self.retrieve_docs(rerank_query, use_reranker=use_reranker)
+        k = self.docs_retriever.search_kwargs.get("k", 30)
+        children = self._fuse_multi_query_children(
+            [self._search_children(self.docs_retriever, query, k, False, "docs") for query in unique_queries],
+            rrf_k=rrf_k,
+            candidate_limit=candidate_limit,
+        )
+        ranked = self._rank_children(rerank_query, children, use_reranker=use_reranker)
+        if not use_reranker:
+            for child in ranked:
+                child.metadata["rerank_score"] = child.metadata.get("fusion_score", 0.0)
+        docs = self._fetch_parents(self.docs_retriever, ranked, "docs")
+        docs.sort(key=lambda document: document.metadata.get("rerank_score", 0), reverse=True)
+        return docs
+
+    def retrieve_tickets_multi_query(
+        self,
+        queries: List[str],
+        *,
+        rerank_query: str,
+        final_limit: int | None = None,
+        child_k: int | None = None,
+        use_reranker: bool = True,
+        rrf_k: int = 60,
+        candidate_limit: int = 60,
+    ) -> List[Document]:
+        """RAG-Fusion over support tickets, followed by one shared rerank pass."""
+        unique_queries = list(dict.fromkeys(query.strip() for query in queries if query and query.strip()))
+        if len(unique_queries) <= 1:
+            return self.retrieve_tickets(
+                rerank_query,
+                final_limit=final_limit,
+                child_k=child_k,
+                use_reranker=use_reranker,
+            )
+        k = child_k or self.tickets_retriever.search_kwargs.get("k", 30)
+        children = self._fuse_multi_query_children(
+            [self._search_children(self.tickets_retriever, query, k, False, "tickets") for query in unique_queries],
+            rrf_k=rrf_k,
+            candidate_limit=candidate_limit,
+        )
+        ranked = self._rank_children(rerank_query, children, limit=len(children), use_reranker=use_reranker)
+        if not use_reranker:
+            for child in ranked:
+                child.metadata["rerank_score"] = child.metadata.get("fusion_score", 0.0)
+        top_children = self._unique_parent_children(ranked, final_limit or self.top_k_final)
+        tickets = self._fetch_parents(self.tickets_retriever, top_children, "tickets")
+        tickets.sort(key=lambda document: document.metadata.get("rerank_score", 0), reverse=True)
+        return tickets
     def retrieve_docs(self, query: str, *, use_reranker: bool = True) -> List[Document]:
         """Ищет только по коллекции документации без фильтра по оборудованию."""
         k = self.docs_retriever.search_kwargs.get("k", 30)
