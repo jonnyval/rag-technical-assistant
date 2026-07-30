@@ -690,9 +690,10 @@ def main() -> None:
     if not args.no_auto_judge and not judge_model:
         raise ValueError(f"No model configured for judge provider: {judge_provider}")
 
-    questions = read_questions(input_path)
+    all_questions = read_questions(input_path)
+    questions = all_questions
     if args.limit is not None:
-        questions = questions[: max(0, args.limit)]
+        questions = all_questions[: max(0, args.limit)]
     if not questions:
         raise ValueError("No questions selected.")
 
@@ -713,7 +714,17 @@ def main() -> None:
         else {"metadata": {}, "questions": []}
     )
     results_by_id = {item["id"]: item for item in stored.get("questions", [])}
-    mappings = {question["id"]: blind_mapping(question["id"], args.seed) for question in questions}
+    mappings = {
+        question["id"]: blind_mapping(question["id"], args.seed)
+        for question in all_questions
+    }
+
+    def ordered_results() -> list[dict[str, Any]]:
+        return [
+            results_by_id[question["id"]]
+            for question in all_questions
+            if question["id"] in results_by_id
+        ]
 
     stored["metadata"] = {
         "updated_at": datetime.now().isoformat(timespec="seconds"),
@@ -774,10 +785,10 @@ def main() -> None:
                 log.info("Skip completed %s/%s", question["id"], mode)
                 continue
             item["runs"][mode] = run_measured(mode, question["question"], adaptive, agentic)
-            stored["questions"] = [results_by_id[q["id"]] for q in questions if q["id"] in results_by_id]
+            stored["questions"] = ordered_results()
             atomic_write_json(results_path, stored)
             atomic_write_json(output_dir / "summary.json", build_summary(results_by_id))
-            write_blind_review(review_path, questions, results_by_id, mappings)
+            write_blind_review(review_path, all_questions, results_by_id, mappings)
 
         successful_runs = all(
             mode in item["runs"] and not item["runs"][mode].get("error")
@@ -795,9 +806,7 @@ def main() -> None:
                     item["runs"],
                     mappings[question["id"]],
                 )
-                stored["questions"] = [
-                    results_by_id[q["id"]] for q in questions if q["id"] in results_by_id
-                ]
+                stored["questions"] = ordered_results()
                 atomic_write_json(results_path, stored)
                 atomic_write_json(
                     output_dir / "automatic_quality_summary.json",
@@ -807,14 +816,14 @@ def main() -> None:
         if args.sleep > 0 and index < len(questions):
             time.sleep(args.sleep)
 
-    stored["questions"] = [results_by_id[question["id"]] for question in questions]
+    stored["questions"] = ordered_results()
     atomic_write_json(results_path, stored)
     atomic_write_json(output_dir / "summary.json", build_summary(results_by_id))
     atomic_write_json(
         output_dir / "automatic_quality_summary.json",
         build_automatic_quality_summary(results_by_id, mappings),
     )
-    write_blind_review(review_path, questions, results_by_id, mappings)
+    write_blind_review(review_path, all_questions, results_by_id, mappings)
     print(f"Comparison finished: {output_dir.resolve()}")
 
 
