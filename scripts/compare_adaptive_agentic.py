@@ -80,6 +80,17 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Do not run the blind LLM judge after both answers are ready.",
     )
+    parser.add_argument(
+        "--judge-provider",
+        default=None,
+        choices=("gemini", "groq", "ollama"),
+        help="Judge provider; default uses applications.evaluation.judge_llm (currently Gemini).",
+    )
+    parser.add_argument(
+        "--judge-model",
+        default=None,
+        help="Judge model; default uses the selected provider model from config.yaml.",
+    )
     parser.add_argument("--seed", default=DEFAULT_SEED, help="Stable seed for blind A/B mapping.")
     parser.add_argument(
         "--init-template",
@@ -228,7 +239,7 @@ def run_measured(mode: str, query: str, adaptive: RAGEngine, agentic: AgenticRAG
     return result
 
 
-def build_automatic_judge():
+def build_automatic_judge(provider: str, model: str):
     from langchain_core.prompts import ChatPromptTemplate
     from langchain_openai import ChatOpenAI
 
@@ -270,33 +281,33 @@ Answer B:
     )
 
     llms = []
-    if settings.active_llm == "groq":
+    if provider == "groq":
         llms = [
             ChatOpenAI(
                 base_url="https://api.groq.com/openai/v1",
                 api_key=key,
-                model=settings.llm_model_name,
+                model=model,
                 temperature=0.0,
                 timeout=settings.llm_timeout,
                 max_retries=settings.llm_max_retries,
             )
             for key in settings.groq_api_keys
         ]
-    elif settings.active_llm == "ollama":
+    elif provider == "ollama":
         llms = [
             ChatOpenAI(
                 base_url=settings.ollama_url,
                 api_key="ollama",
-                model=settings.llm_model_name,
+                model=model,
                 temperature=0.0,
             )
         ]
-    elif settings.active_llm == "gemini":
+    elif provider == "gemini":
         from langchain_google_genai import ChatGoogleGenerativeAI
 
         llms = [
             ChatGoogleGenerativeAI(
-                model=settings.llm_model_name,
+                model=model,
                 google_api_key=key,
                 temperature=0.0,
                 timeout=settings.llm_timeout,
@@ -306,14 +317,14 @@ Answer B:
         ]
     else:
         raise RuntimeError(
-            f"Automatic benchmark judge is not configured for provider: {settings.active_llm}"
+            f"Automatic benchmark judge is not configured for provider: {provider}"
         )
     if not llms:
         raise RuntimeError("No LLM credentials available for automatic benchmark judge")
 
     chains = []
     for llm in llms:
-        if settings.active_llm in ("groq", "ollama"):
+        if provider in ("groq", "ollama"):
             structured = llm.with_structured_output(
                 AutomaticPairwiseJudgement,
                 method="json_mode",
@@ -592,14 +603,20 @@ def summarize_review(output_dir: Path) -> dict[str, Any]:
     return summary
 
 
-def write_readme(path: Path, input_path: Path) -> None:
+def write_readme(
+    path: Path,
+    input_path: Path,
+    judge_provider: str,
+    judge_model: str,
+) -> None:
     from src.config import settings
 
     path.write_text(
         fr"""# Adaptive vs Agentic RAG
 
 Input: `{input_path}`
-LLM: `{settings.active_llm}/{settings.llm_model_name}`
+RAG LLM: `{settings.active_llm}/{settings.llm_model_name}`
+Judge LLM: `{judge_provider}/{judge_model}`
 Embeddings: `{settings.embedding_model_name}`
 Reranker: `{settings.reranker_model_name}`
 
@@ -650,6 +667,17 @@ def main() -> None:
     from src.config import settings
     from src.engine import RAGEngine
 
+    judge_provider = str(args.judge_provider or settings.judge_llm).strip().lower()
+    provider_configs = (
+        settings._raw_config.get("providers", {}).get("llm", {}).get("configs", {})
+    )
+    judge_model = str(
+        args.judge_model
+        or provider_configs.get(judge_provider, {}).get("model", "")
+    ).strip()
+    if not args.no_auto_judge and not judge_model:
+        raise ValueError(f"No model configured for judge provider: {judge_provider}")
+
     questions = read_questions(input_path)
     if args.limit is not None:
         questions = questions[: max(0, args.limit)]
@@ -686,8 +714,15 @@ def main() -> None:
         "tickets_db": settings.second_db_name,
         "blind_seed": args.seed,
         "automatic_judge": not args.no_auto_judge,
+        "judge_provider": judge_provider,
+        "judge_model": judge_model,
     }
-    write_readme(output_dir / "README.md", input_path)
+    write_readme(
+        output_dir / "README.md",
+        input_path,
+        judge_provider,
+        judge_model,
+    )
     atomic_write_json(key_path, mappings)
 
     log.info("Initialize Adaptive engine and shared models...")
@@ -698,7 +733,11 @@ def main() -> None:
         shared_reranker=adaptive.rerank_model,
     )
     agentic = AgenticRAG(shared_engine=deep)
-    judge_chain = None if args.no_auto_judge else build_automatic_judge()
+    judge_chain = (
+        None
+        if args.no_auto_judge
+        else build_automatic_judge(judge_provider, judge_model)
+    )
 
     for index, question in enumerate(questions, start=1):
         item = results_by_id.setdefault(question["id"], {**question, "runs": {}})
