@@ -417,6 +417,8 @@ class RAGEngine:
         *,
         shared_embeddings: Any | None = None,
         shared_reranker: Any | None = None,
+        llm_max_completion_tokens: int | None = None,
+        llm_reasoning_effort: str | None = None,
     ):
         """Собирает retriever, LLM-цепочки и служебное состояние RAG-движка."""
 
@@ -426,6 +428,8 @@ class RAGEngine:
             self.profile_config = RAG_PROFILES[self.profile]
             self.dense_embeddings = shared_embeddings
             self.rerank_model = shared_reranker
+            self.llm_max_completion_tokens = llm_max_completion_tokens
+            self.llm_reasoning_effort = llm_reasoning_effort
             log.info(
                 "RAGEngine initialization: profile=%s top_k=%s/%s reranker=%s",
                 self.profile,
@@ -561,6 +565,12 @@ class RAGEngine:
                 if not settings.groq_api_keys:
                     raise ValueError("❌ GROQ_API_KEYS не установлена в .env!")
 
+                groq_generation_kwargs = {}
+                if self.llm_max_completion_tokens is not None:
+                    groq_generation_kwargs["max_completion_tokens"] = self.llm_max_completion_tokens
+                if self.llm_reasoning_effort:
+                    groq_generation_kwargs["reasoning_effort"] = self.llm_reasoning_effort
+
                 llms = [
                     ChatOpenAI(
                         base_url="https://api.groq.com/openai/v1",
@@ -569,7 +579,8 @@ class RAGEngine:
                         temperature=0.2,
                         timeout=settings.llm_timeout,
                         max_retries=settings.llm_max_retries,
-                        callbacks=[KeyRotationCallbackHandler(key_index=i)]
+                        callbacks=[KeyRotationCallbackHandler(key_index=i)],
+                        **groq_generation_kwargs,
                     )
                     for i, k in enumerate(settings.groq_api_keys)
                 ]

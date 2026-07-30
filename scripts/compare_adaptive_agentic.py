@@ -74,6 +74,18 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--limit", type=int, default=None, help="Process at most N questions.")
     parser.add_argument("--sleep", type=float, default=0.0, help="Pause between questions.")
+    parser.add_argument(
+        "--rag-max-completion-tokens",
+        type=int,
+        default=2048,
+        help="Groq completion budget for benchmark RAG; production defaults are unchanged.",
+    )
+    parser.add_argument(
+        "--rag-reasoning-effort",
+        choices=("low", "medium", "high"),
+        default="low",
+        help="Groq reasoning effort for benchmark RAG.",
+    )
     parser.add_argument("--force", action="store_true", help="Re-run both modes even if results exist.")
     parser.add_argument(
         "--no-auto-judge",
@@ -716,6 +728,8 @@ def main() -> None:
         "automatic_judge": not args.no_auto_judge,
         "judge_provider": judge_provider,
         "judge_model": judge_model,
+        "rag_max_completion_tokens": args.rag_max_completion_tokens,
+        "rag_reasoning_effort": args.rag_reasoning_effort,
     }
     write_readme(
         output_dir / "README.md",
@@ -726,11 +740,17 @@ def main() -> None:
     atomic_write_json(key_path, mappings)
 
     log.info("Initialize Adaptive engine and shared models...")
-    adaptive = RAGEngine("adaptive")
+    adaptive = RAGEngine(
+        "adaptive",
+        llm_max_completion_tokens=args.rag_max_completion_tokens,
+        llm_reasoning_effort=args.rag_reasoning_effort,
+    )
     deep = RAGEngine(
         "deep",
         shared_embeddings=adaptive.dense_embeddings,
         shared_reranker=adaptive.rerank_model,
+        llm_max_completion_tokens=args.rag_max_completion_tokens,
+        llm_reasoning_effort=args.rag_reasoning_effort,
     )
     agentic = AgenticRAG(shared_engine=deep)
     judge_chain = (
@@ -746,7 +766,11 @@ def main() -> None:
         order = ("adaptive", "agentic") if index % 2 else ("agentic", "adaptive")
         log.info("Question %s/%s id=%s order=%s", index, len(questions), question["id"], order)
         for mode in order:
-            if mode in item["runs"] and not args.force:
+            if (
+                mode in item["runs"]
+                and not item["runs"][mode].get("error")
+                and not args.force
+            ):
                 log.info("Skip completed %s/%s", question["id"], mode)
                 continue
             item["runs"][mode] = run_measured(mode, question["question"], adaptive, agentic)
