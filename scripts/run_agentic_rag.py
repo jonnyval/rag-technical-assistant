@@ -16,7 +16,7 @@ from src.context_formatting import format_chat_sources_footer
 
 def main() -> None:
     if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stdout.reconfigure(errors="replace")
 
     parser = argparse.ArgumentParser(description="Experimental bounded Agentic RAG")
     parser.add_argument("query", help="One independent support-engineer question")
