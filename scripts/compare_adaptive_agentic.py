@@ -5,7 +5,8 @@ The runner:
 - alternates execution order to reduce order bias;
 - records exact OpenAI-compatible token usage, latency, sources and agent trace;
 - saves after every question and resumes an existing output directory;
-- creates a blind A/B CSV for manual quality review.
+- runs a blind pairwise LLM judge against reference points;
+- creates a blind A/B CSV for optional manual quality review.
 """
 
 from __future__ import annotations
@@ -19,9 +20,11 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from pydantic import BaseModel, Field
 
 from src.logger import log
 
@@ -42,6 +45,23 @@ REVIEW_SCORE_COLUMNS = (
 )
 
 
+class AutomaticAnswerScore(BaseModel):
+    correctness: int = Field(ge=0, le=2)
+    completeness: int = Field(ge=0, le=2)
+    groundedness: int = Field(ge=0, le=2)
+    usefulness: int = Field(ge=0, le=2)
+    critical_errors: list[str] = Field(default_factory=list)
+    comment: str = ""
+
+
+class AutomaticPairwiseJudgement(BaseModel):
+    answer_a: AutomaticAnswerScore
+    answer_b: AutomaticAnswerScore
+    preferred: Literal["A", "B", "tie"]
+    confidence: Literal["high", "medium", "low"]
+    rationale: str
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Blind quality comparison of reglab-ai-adaptive and experimental Agentic RAG."
@@ -55,6 +75,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--limit", type=int, default=None, help="Process at most N questions.")
     parser.add_argument("--sleep", type=float, default=0.0, help="Pause between questions.")
     parser.add_argument("--force", action="store_true", help="Re-run both modes even if results exist.")
+    parser.add_argument(
+        "--no-auto-judge",
+        action="store_true",
+        help="Do not run the blind LLM judge after both answers are ready.",
+    )
     parser.add_argument("--seed", default=DEFAULT_SEED, help="Stable seed for blind A/B mapping.")
     parser.add_argument(
         "--init-template",
@@ -203,6 +228,139 @@ def run_measured(mode: str, query: str, adaptive: RAGEngine, agentic: AgenticRAG
     return result
 
 
+def build_automatic_judge():
+    from langchain_core.prompts import ChatPromptTemplate
+    from langchain_openai import ChatOpenAI
+
+    from src.config import settings
+    from src.engine import RoundRobinFallbackRunnable
+
+    prompt = ChatPromptTemplate.from_template(
+        """You are a strict, impartial evaluator of two technical-support RAG answers.
+The answers are anonymized as A and B. Never infer or favor their implementation.
+
+Evaluate each answer independently against the question and reference points.
+The reference points are derived from the resolved support case and are authoritative,
+but equivalent technically correct wording is acceptable.
+
+Score every criterion from 0 to 2:
+- correctness: technical claims and proposed actions are correct;
+- completeness: all important reference points needed for the question are covered;
+- groundedness: uncertainty is explicit and unsupported claims are avoided;
+- usefulness: a support engineer can use the answer with little or no rewriting.
+
+Do not reward verbosity, formatting, number of citations, or mentioning a ticket by itself.
+Penalize dangerous actions, invented root causes, wrong product/series, and confident claims
+that are absent from the reference points. A concise answer may receive the maximum score.
+Choose preferred=A/B only for a meaningful quality advantage; otherwise choose tie.
+Use confidence=low when the reference points are ambiguous or both answers are hard to compare.
+
+Question:
+{question}
+
+Reference points:
+{expected_points}
+
+Answer A:
+{answer_a}
+
+Answer B:
+{answer_b}
+"""
+    )
+
+    llms = []
+    if settings.active_llm == "groq":
+        llms = [
+            ChatOpenAI(
+                base_url="https://api.groq.com/openai/v1",
+                api_key=key,
+                model=settings.llm_model_name,
+                temperature=0.0,
+                timeout=settings.llm_timeout,
+                max_retries=settings.llm_max_retries,
+            )
+            for key in settings.groq_api_keys
+        ]
+    elif settings.active_llm == "ollama":
+        llms = [
+            ChatOpenAI(
+                base_url=settings.ollama_url,
+                api_key="ollama",
+                model=settings.llm_model_name,
+                temperature=0.0,
+            )
+        ]
+    elif settings.active_llm == "gemini":
+        from langchain_google_genai import ChatGoogleGenerativeAI
+
+        llms = [
+            ChatGoogleGenerativeAI(
+                model=settings.llm_model_name,
+                google_api_key=key,
+                temperature=0.0,
+                timeout=settings.llm_timeout,
+                max_retries=settings.llm_max_retries,
+            )
+            for key in settings.google_api_keys
+        ]
+    else:
+        raise RuntimeError(
+            f"Automatic benchmark judge is not configured for provider: {settings.active_llm}"
+        )
+    if not llms:
+        raise RuntimeError("No LLM credentials available for automatic benchmark judge")
+
+    chains = []
+    for llm in llms:
+        if settings.active_llm in ("groq", "ollama"):
+            structured = llm.with_structured_output(
+                AutomaticPairwiseJudgement,
+                method="json_mode",
+            )
+        else:
+            structured = llm.with_structured_output(AutomaticPairwiseJudgement)
+        chains.append(prompt | structured)
+    return RoundRobinFallbackRunnable(chains, label="Benchmark Judge LLM")
+
+
+def run_automatic_judge(
+    judge_chain: Any,
+    question: dict[str, Any],
+    runs: dict[str, dict[str, Any]],
+    mapping: dict[str, str],
+) -> dict[str, Any]:
+    from langchain_community.callbacks.manager import get_openai_callback
+
+    started = time.perf_counter()
+    callback = None
+    try:
+        with get_openai_callback() as callback:
+            judgement = judge_chain.invoke(
+                {
+                    "question": question["question"],
+                    "expected_points": "\n".join(
+                        f"- {point}" for point in question.get("expected_points", [])
+                    ) or "No explicit reference points were supplied.",
+                    "answer_a": runs[mapping["A"]].get("answer", ""),
+                    "answer_b": runs[mapping["B"]].get("answer", ""),
+                }
+            )
+        result = judgement.model_dump()
+        result["error"] = ""
+    except Exception as error:
+        log.error("Automatic benchmark judge failed: %s", error, exc_info=True)
+        result = {"error": f"{type(error).__name__}: {error}"}
+    result["metrics"] = {
+        "elapsed_seconds": round(time.perf_counter() - started, 3),
+        "prompt_tokens": int(getattr(callback, "prompt_tokens", 0) or 0),
+        "completion_tokens": int(getattr(callback, "completion_tokens", 0) or 0),
+        "total_tokens": int(getattr(callback, "total_tokens", 0) or 0),
+        "llm_requests": int(getattr(callback, "successful_requests", 0) or 0),
+    }
+    return result
+
+
 def blind_mapping(question_id: str, seed: str) -> dict[str, str]:
     digest = hashlib.sha256(f"{seed}:{question_id}".encode("utf-8")).digest()
     if digest[0] % 2:
@@ -299,6 +457,66 @@ def build_summary(results_by_id: dict[str, dict[str, Any]]) -> dict[str, Any]:
     return summary
 
 
+def build_automatic_quality_summary(
+    results_by_id: dict[str, dict[str, Any]],
+    mappings: dict[str, dict[str, str]],
+) -> dict[str, Any]:
+    criteria = ("correctness", "completeness", "groundedness", "usefulness")
+    scores = {
+        mode: {criterion: [] for criterion in criteria}
+        for mode in ("adaptive", "agentic")
+    }
+    preferences = {"adaptive": 0, "agentic": 0, "tie": 0}
+    confidence = {"high": 0, "medium": 0, "low": 0}
+    errors = []
+    judged = 0
+    judge_tokens = 0
+
+    for question_id, item in results_by_id.items():
+        judgement = item.get("automatic_judgement", {})
+        if not judgement:
+            continue
+        if judgement.get("error"):
+            errors.append({"id": question_id, "error": judgement["error"]})
+            continue
+        mapping = mappings.get(question_id)
+        if not mapping:
+            errors.append({"id": question_id, "error": "missing blind mapping"})
+            continue
+        judged += 1
+        judge_tokens += int(judgement.get("metrics", {}).get("total_tokens", 0) or 0)
+        confidence[str(judgement.get("confidence", "low"))] += 1
+        for side_key, side in (("answer_a", "A"), ("answer_b", "B")):
+            mode = mapping[side]
+            side_score = judgement.get(side_key, {})
+            for criterion in criteria:
+                scores[mode][criterion].append(float(side_score.get(criterion, 0)))
+        preferred = str(judgement.get("preferred", "tie"))
+        if preferred in ("A", "B"):
+            preferences[mapping[preferred]] += 1
+        else:
+            preferences["tie"] += 1
+
+    return {
+        "judged_questions": judged,
+        "preferences": preferences,
+        "judge_confidence": confidence,
+        "judge_total_tokens": judge_tokens,
+        "scores": {
+            mode: {
+                criterion: {
+                    "mean": round(statistics.mean(values), 3) if values else 0,
+                    "total": round(sum(values), 3),
+                    "count": len(values),
+                }
+                for criterion, values in mode_scores.items()
+            }
+            for mode, mode_scores in scores.items()
+        },
+        "errors": errors,
+    }
+
+
 def summarize_review(output_dir: Path) -> dict[str, Any]:
     review_path = output_dir / "review.csv"
     key_path = output_dir / "review_key.json"
@@ -385,7 +603,14 @@ LLM: `{settings.active_llm}/{settings.llm_model_name}`
 Embeddings: `{settings.embedding_model_name}`
 Reranker: `{settings.reranker_model_name}`
 
-## Manual blind review
+## Automatic blind evaluation
+
+By default, an LLM judge evaluates anonymized answers A/B against `expected_points`.
+The automatic result is saved to `automatic_quality_summary.json`; per-question
+scores, confidence and rationale are stored in `results.json`.
+Use `--no-auto-judge` only when automatic evaluation is not required.
+
+## Optional manual blind review
 
 Open `review.csv` without opening `review_key.json`. Score A and B independently:
 
@@ -398,7 +623,8 @@ Set `preferred_A_B_tie` to `A`, `B` or `tie`. Add free-form notes to `review_com
 Only after the review is complete, use `review_key.json` to reveal the modes.
 
 `results.json` contains full non-blind outputs, sources, token usage and Agentic RAG trace.
-`summary.json` contains operational totals and averages; it does not score answer quality.
+`summary.json` contains operational totals and averages.
+`automatic_quality_summary.json` contains automatic quality scores and winners.
 
 After filling `review.csv`, calculate quality totals:
 
@@ -459,6 +685,7 @@ def main() -> None:
         "docs_db": settings.active_db_name,
         "tickets_db": settings.second_db_name,
         "blind_seed": args.seed,
+        "automatic_judge": not args.no_auto_judge,
     }
     write_readme(output_dir / "README.md", input_path)
     atomic_write_json(key_path, mappings)
@@ -471,6 +698,7 @@ def main() -> None:
         shared_reranker=adaptive.rerank_model,
     )
     agentic = AgenticRAG(shared_engine=deep)
+    judge_chain = None if args.no_auto_judge else build_automatic_judge()
 
     for index, question in enumerate(questions, start=1):
         item = results_by_id.setdefault(question["id"], {**question, "runs": {}})
@@ -488,12 +716,41 @@ def main() -> None:
             atomic_write_json(output_dir / "summary.json", build_summary(results_by_id))
             write_blind_review(review_path, questions, results_by_id, mappings)
 
+        successful_runs = all(
+            mode in item["runs"] and not item["runs"][mode].get("error")
+            for mode in ("adaptive", "agentic")
+        )
+        if judge_chain is not None and successful_runs:
+            if (
+                args.force
+                or not item.get("automatic_judgement")
+                or item.get("automatic_judgement", {}).get("error")
+            ):
+                item["automatic_judgement"] = run_automatic_judge(
+                    judge_chain,
+                    question,
+                    item["runs"],
+                    mappings[question["id"]],
+                )
+                stored["questions"] = [
+                    results_by_id[q["id"]] for q in questions if q["id"] in results_by_id
+                ]
+                atomic_write_json(results_path, stored)
+                atomic_write_json(
+                    output_dir / "automatic_quality_summary.json",
+                    build_automatic_quality_summary(results_by_id, mappings),
+                )
+
         if args.sleep > 0 and index < len(questions):
             time.sleep(args.sleep)
 
     stored["questions"] = [results_by_id[question["id"]] for question in questions]
     atomic_write_json(results_path, stored)
     atomic_write_json(output_dir / "summary.json", build_summary(results_by_id))
+    atomic_write_json(
+        output_dir / "automatic_quality_summary.json",
+        build_automatic_quality_summary(results_by_id, mappings),
+    )
     write_blind_review(review_path, questions, results_by_id, mappings)
     print(f"Comparison finished: {output_dir.resolve()}")
 
