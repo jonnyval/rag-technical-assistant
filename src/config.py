@@ -256,6 +256,15 @@ class Settings:
     def diagnostic_sgr_enabled(self) -> bool:
         return bool(self.diagnostic_sgr_config.get("enabled", False))
 
+    @property
+    def agentic_rag_config(self) -> Dict[str, Any]:
+        config = self._raw_config.get("agentic_rag", {})
+        return config if isinstance(config, dict) else {}
+
+    @property
+    def agentic_rag_enabled(self) -> bool:
+        return bool(self.agentic_rag_config.get("enabled", False))
+
     # ===== ЧАНКИНГ =====
     @property
     def child_chunk_size(self) -> int:

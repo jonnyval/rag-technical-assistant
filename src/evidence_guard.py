@@ -293,13 +293,19 @@ def apply_response_provenance(
     allowed_ticket_keys = {
         str(value).strip()
         for source in ticket_sources
-        for value in (source.title, source.source_file)
+        for value in (source.title, source.source_file, source.url)
         if str(value).strip()
+    }
+    allowed_ticket_ids = {
+        ticket_id.upper()
+        for source in ticket_sources
+        for ticket_id in re.findall(r"\bRL-\d+\b", " ".join((source.title, source.source_file, source.url)), flags=re.IGNORECASE)
     }
     valid_tickets = []
     for ticket in getattr(response, "similar_tickets", None) or []:
         ticket_keys = {str(getattr(ticket, "ticket_id", "")).strip(), str(getattr(ticket, "source_file", "")).strip()}
-        if ticket_keys & allowed_ticket_keys:
+        normalized_ticket_id = str(getattr(ticket, "ticket_id", "")).strip().upper()
+        if ticket_keys & allowed_ticket_keys or normalized_ticket_id in allowed_ticket_ids:
             valid_tickets.append(ticket)
         else:
             log.warning("EvidenceGuard: dropped ticket absent from retrieval: %s", ticket_keys)
@@ -309,7 +315,9 @@ def apply_response_provenance(
     cited_ids = _source_ids_used_in_response(response)
     for ticket in valid_tickets:
         for source in ticket_sources:
-            if str(getattr(ticket, "ticket_id", "")).strip() in {source.title, source.source_file}:
+            ticket_id = str(getattr(ticket, "ticket_id", "")).strip().upper()
+            source_text = " ".join((source.title, source.source_file, source.url)).upper()
+            if ticket_id and ticket_id in source_text:
                 cited_ids.add(source.source_id.upper())
 
     used_docs = [source for source in doc_sources if source.source_id.upper() in cited_ids]

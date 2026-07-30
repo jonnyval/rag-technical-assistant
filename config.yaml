@@ -310,3 +310,17 @@ debug:
 # GIGACHAT_CREDENTIALS={"key": "value"}     # JSON с учетными данными GigaChat
 #
 # Если в .env переменная не найдена, будет ошибка при инициализации!
+
+# === ЭКСПЕРИМЕНТАЛЬНЫЙ AGENTIC RAG ===
+# Пока доступен только через scripts/run_agentic_rag.py и не публикуется в OpenWebUI.
+agentic_rag:
+  enabled: true
+  max_rounds: 3
+  max_tool_calls: 6
+  max_queries_per_round: 2
+  timeout_seconds: 90
+  expose_trace: true
+  docs_context_max_chars: 4000
+  tickets_context_max_chars: 3000
+  doc_max_chars: 1800
+  ticket_max_chars: 1400
