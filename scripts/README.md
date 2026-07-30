@@ -23,6 +23,7 @@
 - `run_evaluator.py` - оценка ответов через similarity и LLM-as-a-judge.
 - `benchmark_yandex_models.py` - сравнение моделей Yandex AI Studio на RAG-контексте.
 - `compare_adaptive_agentic.py` - возобновляемое слепое A/B-сравнение Adaptive и Agentic RAG с токенами, источниками и trace.
+- `diagnose_retrieval_recall.py` - поэтапный аудит semantic recall: Qdrant candidates, reranker selection, финальный контекст и ответы; поддерживает Gemini-судью и локальный embedding+CrossEncoder fallback.
 - `test_tickets_search.py` - ручная проверка поиска похожих тикетов.
 
 ## Служебные сценарии
