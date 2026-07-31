@@ -326,7 +326,7 @@ debug:
 # Если в .env переменная не найдена, будет ошибка при инициализации!
 
 # === ЭКСПЕРИМЕНТАЛЬНЫЙ AGENTIC RAG ===
-# Пока доступен только через scripts/run_agentic_rag.py и не публикуется в OpenWebUI.
+# Публикуется в OpenWebUI как reglab-ai-agentic и также доступен через scripts/run_agentic_rag.py.
 agentic_rag:
   enabled: true
   max_rounds: 3

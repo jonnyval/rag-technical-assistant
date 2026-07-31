@@ -27,6 +27,8 @@ import uvicorn
 # Allow running this script directly: python scripts/api_server.py
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from src.agentic.pipeline import AgenticRAG  # noqa: E402
+from src.config import settings  # noqa: E402
 from src.engine import RAGEngine  # noqa: E402
 from src.logger import log  # noqa: E402
 from src.context_formatting import format_chat_sources_footer  # noqa: E402
@@ -55,11 +57,13 @@ CHAT_MODEL_ID = "reglab-ai-chat"
 CHAT_DEEP_MODEL_ID = "reglab-ai-chat-deep"
 DEEP_MODEL_ID = "reglab-ai-deep"
 ADAPTIVE_MODEL_ID = "reglab-ai-adaptive"
+AGENTIC_MODEL_ID = "reglab-ai-agentic"
 MODEL_PROFILES = {
     DEEP_MODEL_ID: "deep",
     ADAPTIVE_MODEL_ID: "adaptive",
+    AGENTIC_MODEL_ID: "deep",
 }
-API_VERSION = "1.1"
+API_VERSION = "1.2"
 DEFAULT_MAX_CONCURRENCY = 2
 
 
@@ -168,6 +172,8 @@ def _max_concurrency() -> int:
 async def lifespan(app: FastAPI):
     app.state.rag_engine = None
     app.state.rag_engines = {}
+    app.state.agentic_rag = None
+    app.state.agentic_rag_lock = asyncio.Lock()
     app.state.ticket_search = None
     app.state.ticket_search_lock = asyncio.Lock()
     app.state.engine_locks = {
@@ -190,6 +196,7 @@ async def lifespan(app: FastAPI):
 
     app.state.rag_engine = None
     app.state.rag_engines = {}
+    app.state.agentic_rag = None
     app.state.ticket_search = None
     log.info("RegLab RAG API stopped.")
 
@@ -245,6 +252,27 @@ async def _get_engine_for_model(request: Request, model_id: str) -> RAGEngine:
             if profile == "deep":
                 request.app.state.rag_engine = engine
         return engine
+
+
+async def _get_agentic_rag(request: Request, engine: RAGEngine) -> AgenticRAG:
+    """Lazily build the controller while reusing the already loaded deep engine."""
+    if not settings.agentic_rag_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Agentic RAG is disabled",
+        )
+    pipeline = getattr(request.app.state, "agentic_rag", None)
+    if pipeline is not None:
+        return pipeline
+
+    lock: asyncio.Lock = getattr(request.app.state, "agentic_rag_lock")
+    async with lock:
+        pipeline = getattr(request.app.state, "agentic_rag", None)
+        if pipeline is None:
+            log.info("Lazy initialization of AgenticRAG with shared deep engine")
+            pipeline = await run_in_threadpool(AgenticRAG, shared_engine=engine)
+            request.app.state.agentic_rag = pipeline
+        return pipeline
 
 
 async def _get_ticket_search(request: Request) -> Any:
@@ -960,6 +988,13 @@ async def list_models() -> dict:
             "RegLab AI Adaptive: fast documentation search and adaptive ticket reranking for incidents",
         ),
     ]
+    if settings.agentic_rag_enabled:
+        models.append(
+            (
+                AGENTIC_MODEL_ID,
+                "RegLab AI Agentic: bounded iterative retrieval with evidence reflection",
+            )
+        )
     return {
         "object": "list",
         "data": [
@@ -1005,6 +1040,26 @@ async def chat_completions(request: Request, payload: ChatCompletionRequest) -> 
                 return await _ticket_search_completion(request, payload, request_id, query)
 
         engine = await _get_engine_for_model(request, payload.model)
+        if payload.model == AGENTIC_MODEL_ID:
+            agentic_rag = await _get_agentic_rag(request, engine)
+            log.info(
+                "Agentic completion request request_id=%s model=%s query=%r",
+                request_id,
+                payload.model,
+                query[:120],
+            )
+            async with request.app.state.inference_semaphore:
+                agentic_result = await run_in_threadpool(agentic_rag.run, query)
+            log.info(
+                "Agentic completion finished request_id=%s stop=%s rounds=%s tools=%s elapsed=%.3fs",
+                request_id,
+                agentic_result.stop_reason,
+                agentic_result.rounds_used,
+                agentic_result.tool_calls_used,
+                agentic_result.elapsed_seconds,
+            )
+            full_answer = _format_support_answer(agentic_result.answer)
+            return await _chat_answer_completion(payload, request_id, query, full_answer)
         if payload.model in (CHAT_MODEL_ID, CHAT_DEEP_MODEL_ID):
             log.info(
                 "Wiki chat completion request request_id=%s model=%s profile=%s query=%r messages_count=%d",
@@ -1102,6 +1157,8 @@ async def chat_completions(request: Request, payload: ChatCompletionRequest) -> 
                 "total_tokens": prompt_tokens + completion_tokens,
             },
         }
+    except HTTPException:
+        raise
     except ValueError as exc:
         log.warning("Invalid chat request request_id=%s: %s", request_id, exc)
         raise _safe_http_error("Invalid chat request", status.HTTP_400_BAD_REQUEST, request_id) from exc
