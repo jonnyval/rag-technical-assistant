@@ -7,6 +7,7 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.agentic.controller import AgenticController
+from src.agentic.tools import AgenticRetrievalTools
 from src.context_formatting import SourceReference
 from src.evidence_guard import apply_response_provenance
 
@@ -49,6 +50,35 @@ def test_ticket_ranking_uses_exact_and_cyrillic_terms() -> None:
     assert ranked == [exact, generic]
 
 
+def test_multi_query_tool_trace_preserves_each_search() -> None:
+    document = SimpleNamespace(
+        page_content="evidence",
+        metadata={"page_title": "R500 flags"},
+    )
+    calls = []
+
+    def retrieve(queries, rerank_query, *, use_reranker):
+        calls.append((queries, rerank_query, use_reranker))
+        return [document]
+
+    tools = AgenticRetrievalTools(
+        SimpleNamespace(_retrieve_docs_for_queries=retrieve)
+    )
+    documents, trace = tools.search_docs_multi(
+        ["original R500", "IS_ACTIVE назначение R500"],
+        rerank_query="original R500",
+        round_index=0,
+    )
+    assert documents == [document]
+    assert calls == [
+        (["original R500", "IS_ACTIVE назначение R500"], "original R500", True)
+    ]
+    assert [step.query for step in trace] == [
+        "original R500",
+        "IS_ACTIVE назначение R500",
+    ]
+    assert all(step.tool == "search_docs" for step in trace)
+
 def test_ticket_provenance_recognizes_id_in_url() -> None:
     response = SimpleNamespace(
         docs_answer="",
@@ -75,5 +105,6 @@ if __name__ == "__main__":
     test_agentic_diagnostic_classifier_covers_connection_loss()
     test_exact_identifier_query_is_derived_from_user_question()
     test_ticket_ranking_uses_exact_and_cyrillic_terms()
+    test_multi_query_tool_trace_preserves_each_search()
     test_ticket_provenance_recognizes_id_in_url()
     print("Agentic RAG unit checks: OK")

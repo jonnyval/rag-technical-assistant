@@ -10,7 +10,7 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.context_formatting import SourceReference
-from src.engine import RAGEngine, RoundRobinFallbackRunnable
+from src.engine import MultiQueryPlan, RAGEngine, RoundRobinFallbackRunnable
 from src.evidence_guard import (
     apply_response_provenance, apply_transformation_evidence_guard,
     apply_entity_coverage_guard, apply_diagnostic_scope_guard,
@@ -85,6 +85,82 @@ def test_entity_and_diagnostic_guards_require_direct_scope() -> None:
     response = SimpleNamespace(docs_answer="generic", draft_private_comment="generic", evidence_notes=[], confidence="high")
     result = apply_diagnostic_scope_guard(response, "ошибка self-diagnostic что делать?", "general runtime guide")
     assert "точный текст сообщения" in result.draft_private_comment and result.confidence == "low"
+def test_structured_query_planner_separates_source_queries() -> None:
+    class FakePlanner:
+        def invoke(self, payload):
+            assert "documentation_queries" in payload["planner_instructions"]
+            return MultiQueryPlan(
+                entities=["R500", "IS_ACTIVE"],
+                documentation_queries=[
+                    "назначение IS_ACTIVE резервирование R500",
+                    "параметры CPU_A CPU_B R500",
+                ],
+                ticket_queries=[
+                    "R500 после перезагрузки сбрасывается IS_ACTIVE",
+                ],
+            )
+
+    from src.config import settings
+
+    structured = settings.multi_query_config.setdefault("structured_planner", {})
+    previous = structured.get("enabled", False)
+    structured["enabled"] = True
+    try:
+        engine = RAGEngine.__new__(RAGEngine)
+        engine.multi_query_chain = FakePlanner()
+        docs, tickets = engine._build_multi_query_searches(
+            "После перезагрузки R500 сбрасывается IS_ACTIVE",
+            "После перезагрузки R500 сбрасывается IS_ACTIVE",
+            [],
+            "No module was detected.",
+        )
+    finally:
+        structured["enabled"] = previous
+
+    assert len(docs) == 3
+    assert len(tickets) == 2
+    assert docs != tickets
+    assert all("R500" in query for query in [*docs, *tickets])
+    assert any("назначение" in query for query in docs)
+    assert any("сбрасывается" in query for query in tickets)
+
+
+def test_legacy_multi_query_remains_shared() -> None:
+    class FakePlanner:
+        def invoke(self, payload):
+            assert "Legacy mode" in payload["planner_instructions"]
+            return MultiQueryPlan(queries=["ошибка загрузки проекта R500"])
+
+    from src.config import settings
+
+    structured = settings.multi_query_config.setdefault("structured_planner", {})
+    previous = structured.get("enabled", False)
+    structured["enabled"] = False
+    try:
+        engine = RAGEngine.__new__(RAGEngine)
+        engine.multi_query_chain = FakePlanner()
+        docs, tickets = engine._build_multi_query_searches(
+            "download denied R500",
+            "download denied R500",
+            [],
+            "No module was detected.",
+        )
+    finally:
+        structured["enabled"] = previous
+
+    assert docs == tickets
+    assert docs == ["download denied R500", "ошибка загрузки проекта R500"]
+
+def test_query_variant_validation_preserves_requested_series() -> None:
+    queries = RAGEngine._prepare_query_variants(
+        "заводской сброс R400",
+        "заводской сброс R400",
+        ["сервисный режим", "сервисный режим", "x"],
+        [],
+        3,
+    )
+    assert queries == ["заводской сброс R400", "сервисный режим R400"]
+
 def test_retry_policy_does_not_repeat_schema_errors() -> None:
     assert RoundRobinFallbackRunnable._failure_policy(RuntimeError("503 UNAVAILABLE")) == (True, 30.0)
     assert RoundRobinFallbackRunnable._failure_policy(RuntimeError("404 NOT_FOUND")) == (True, 900.0)
@@ -97,5 +173,8 @@ if __name__ == "__main__":
     test_ascii_transformation_guard_rejects_lookalike_api()
     test_series_filter_drops_r500_for_r400_request()
     test_entity_and_diagnostic_guards_require_direct_scope()
+    test_structured_query_planner_separates_source_queries()
+    test_legacy_multi_query_remains_shared()
+    test_query_variant_validation_preserves_requested_series()
     test_retry_policy_does_not_repeat_schema_errors()
     print("Engine guard regression checks: OK")

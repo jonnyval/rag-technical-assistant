@@ -246,6 +246,14 @@ class Settings:
     @property
     def multi_query_enabled(self) -> bool:
         return bool(self.multi_query_config.get("enabled", False))
+    @property
+    def structured_query_planner_config(self) -> Dict[str, Any]:
+        config = self.multi_query_config.get("structured_planner", {})
+        return config if isinstance(config, dict) else {}
+
+    @property
+    def structured_query_planner_enabled(self) -> bool:
+        return bool(self.structured_query_planner_config.get("enabled", False))
     
     @property
     def diagnostic_sgr_config(self) -> Dict[str, Any]:

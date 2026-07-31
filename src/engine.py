@@ -269,11 +269,32 @@ class WikiChatResponse(BaseModel):
 
 
 class MultiQueryPlan(BaseModel):
-    """Short retrieval-only alternatives generated before RAG-Fusion."""
+    """Retrieval-only query decomposition produced before RAG-Fusion."""
 
-    queries: List[str] = Field(default_factory=list, description="Up to two additional short search queries")
+    queries: List[str] = Field(
+        default_factory=list,
+        description="Legacy shared search-query alternatives",
+    )
+    documentation_queries: List[str] = Field(
+        default_factory=list,
+        description="Focused queries for official documentation",
+    )
+    ticket_queries: List[str] = Field(
+        default_factory=list,
+        description="Focused symptom/case queries for historical tickets",
+    )
+    entities: List[str] = Field(
+        default_factory=list,
+        description="Exact product, module, parameter, error, path and version anchors",
+    )
 
-    @field_validator("queries", mode="before")
+    @field_validator(
+        "queries",
+        "documentation_queries",
+        "ticket_queries",
+        "entities",
+        mode="before",
+    )
     @classmethod
     def normalize_queries(cls, value):
         if value is None:
@@ -933,16 +954,29 @@ User question:
             multi_query_chain = None
             if settings.multi_query_enabled:
                 multi_query_prompt = ChatPromptTemplate.from_template("""
-You generate additional search queries for a RegLab technical-support RAG system.
-Do not answer the user and do not diagnose the issue. Return JSON matching MultiQueryPlan.
+You are a retrieval planner for a RegLab technical-support RAG system.
+Do not answer the user, diagnose the issue, or propose a solution. Return JSON matching MultiQueryPlan.
 
-Create at most {max_queries} short query variants that may retrieve documentation or historical tickets missed by the original wording.
-Rules:
+Planner mode:
+{planner_instructions}
+
+Shared rules:
 - The original query is already searched; never repeat it.
-- Preserve exact model names, module codes, error text, paths, commands and versions from the original query.
-- Do not invent error codes, product models, menu paths, causes or solutions.
-- Prefer alternative domain wording, symptom wording and exact technical terms.
+- Decompose independent evidence needs instead of producing cosmetic paraphrases.
+- Preserve exact product names, module codes, identifiers, error text, paths, commands and versions from the user query.
+- Every entity in `entities` must occur verbatim in the original query. Do not infer expansions or related models.
+- Do not invent error codes, product models, menu paths, causes, actions or solutions.
+- Queries must be short, standalone and useful without conversation history.
 - Russian is preferred; keep established English technical tokens unchanged.
+
+For `documentation_queries`, search for definitions, purpose, parameters, limits, configuration, procedures and applicability conditions explicitly requested or implied by the question structure.
+For `ticket_queries`, search for historical cases using concrete equipment, symptoms, observed state, error text and operating conditions from the question.
+Do not copy the same query to both lists unless its exact anchors are genuinely useful for both source types.
+
+Limits:
+- documentation_queries: at most {max_documentation_queries}
+- ticket_queries: at most {max_ticket_queries}
+- legacy queries: at most {max_queries}
 
 Original query:
 {input}
@@ -1002,34 +1036,30 @@ Detected module context:
             return 60, 60
         return rrf_k, candidate_limit
 
-    def _build_multi_query_searches(self, query: str, retrieval_query: str, detected_modules: List[Dict[str, Any]], module_context: str) -> List[str]:
-        """Keep the original search and add bounded, validated LLM variants."""
-        if not settings.multi_query_enabled or self.multi_query_chain is None:
-            return [retrieval_query]
-        try:
-            max_queries = max(0, min(int(settings.multi_query_config.get("max_generated_queries", 2)), 3))
-        except (TypeError, ValueError):
-            max_queries = 2
-        if not max_queries:
-            return [retrieval_query]
-        try:
-            plan = self.multi_query_chain.invoke({
-                "input": query,
-                "module_context": module_context or "No module was detected.",
-                "max_queries": max_queries,
-            })
-        except Exception as error:
-            log.warning("Multi-Query generation failed; using original search only: %s", error)
-            return [retrieval_query]
-
-        requested_series = {item.upper() for item in re.findall(r"\bR\d{3}S?\b", query, flags=re.IGNORECASE)}
+    @staticmethod
+    def _prepare_query_variants(
+        query: str,
+        retrieval_query: str,
+        variants: Any,
+        detected_modules: List[Dict[str, Any]],
+        max_queries: int,
+    ) -> List[str]:
+        """Validate generated queries and preserve deterministic user anchors."""
+        requested_series = {
+            item.upper()
+            for item in re.findall(r"\bR\d{3}S?\b", query, flags=re.IGNORECASE)
+        }
         searches = [retrieval_query]
         seen = {re.sub(r"\W+", "", retrieval_query.lower())}
-        for variant in (getattr(plan, "queries", None) or [])[:max_queries]:
+        for variant in list(variants or [])[:max_queries]:
             variant = " ".join(str(variant).split()).strip()
-            if not variant or len(variant) > 360:
+            raw_key = re.sub(r"\W+", "", variant.lower())
+            if len(raw_key) < 4 or len(variant) > 360:
                 continue
-            variant_series = {item.upper() for item in re.findall(r"\bR\d{3}S?\b", variant, flags=re.IGNORECASE)}
+            variant_series = {
+                item.upper()
+                for item in re.findall(r"\bR\d{3}S?\b", variant, flags=re.IGNORECASE)
+            }
             if requested_series and not requested_series.issubset(variant_series):
                 variant = f"{variant} {' '.join(sorted(requested_series))}"
             focused_query = build_module_enriched_query(variant, detected_modules)
@@ -1038,10 +1068,105 @@ Detected module context:
                 continue
             seen.add(key)
             searches.append(focused_query)
-        if len(searches) > 1:
-            log.info("Multi-Query RAG-Fusion: %s search variants", len(searches))
         return searches
 
+    def _build_multi_query_searches(
+        self,
+        query: str,
+        retrieval_query: str,
+        detected_modules: List[Dict[str, Any]],
+        module_context: str,
+    ) -> tuple[List[str], List[str]]:
+        """Build bounded source-specific searches, preserving the legacy path."""
+        if not settings.multi_query_enabled or self.multi_query_chain is None:
+            return [retrieval_query], [retrieval_query]
+
+        structured = settings.structured_query_planner_enabled
+        try:
+            legacy_max = max(
+                0,
+                min(int(settings.multi_query_config.get("max_generated_queries", 2)), 3),
+            )
+        except (TypeError, ValueError):
+            legacy_max = 2
+        structured_config = settings.structured_query_planner_config
+        try:
+            docs_max = max(
+                0,
+                min(int(structured_config.get("max_documentation_queries", 3)), 4),
+            )
+            tickets_max = max(
+                0,
+                min(int(structured_config.get("max_ticket_queries", 3)), 4),
+            )
+        except (TypeError, ValueError):
+            docs_max, tickets_max = 3, 3
+        if not structured and not legacy_max:
+            return [retrieval_query], [retrieval_query]
+        if structured and not docs_max and not tickets_max:
+            return [retrieval_query], [retrieval_query]
+
+        planner_instructions = (
+            "Structured mode: fill `entities`, `documentation_queries` and "
+            "`ticket_queries`; leave legacy `queries` empty. Each query must cover "
+            "a distinct evidence need grounded in the original wording."
+            if structured
+            else
+            "Legacy mode: fill only `queries` with alternative domain/symptom "
+            "wording; leave source-specific lists empty."
+        )
+        try:
+            plan = self.multi_query_chain.invoke({
+                "input": query,
+                "module_context": module_context or "No module was detected.",
+                "planner_instructions": planner_instructions,
+                "max_queries": legacy_max,
+                "max_documentation_queries": docs_max,
+                "max_ticket_queries": tickets_max,
+            })
+        except Exception as error:
+            log.warning("Multi-Query generation failed; using original search only: %s", error)
+            return [retrieval_query], [retrieval_query]
+
+        if structured:
+            doc_variants = getattr(plan, "documentation_queries", None) or []
+            ticket_variants = getattr(plan, "ticket_queries", None) or []
+            legacy_variants = getattr(plan, "queries", None) or []
+            if not doc_variants and not ticket_variants and legacy_variants:
+                log.warning("Structured planner returned legacy queries; using them for both sources")
+                doc_variants = ticket_variants = legacy_variants
+            doc_queries = self._prepare_query_variants(
+                query,
+                retrieval_query,
+                doc_variants,
+                detected_modules,
+                docs_max,
+            )
+            ticket_queries = self._prepare_query_variants(
+                query,
+                retrieval_query,
+                ticket_variants,
+                detected_modules,
+                tickets_max,
+            )
+            log.info(
+                "Structured Query Planner: docs=%s tickets=%s entities=%s",
+                len(doc_queries),
+                len(ticket_queries),
+                len(getattr(plan, "entities", None) or []),
+            )
+            return doc_queries, ticket_queries
+
+        shared_queries = self._prepare_query_variants(
+            query,
+            retrieval_query,
+            getattr(plan, "queries", None) or [],
+            detected_modules,
+            legacy_max,
+        )
+        if len(shared_queries) > 1:
+            log.info("Multi-Query RAG-Fusion: %s search variants", len(shared_queries))
+        return shared_queries, list(shared_queries)
     def _retrieve_docs_for_queries(self, queries: List[str], retrieval_query: str, *, use_reranker: bool) -> List:
         if len(queries) <= 1:
             return self.retriever.retrieve_docs(retrieval_query, use_reranker=use_reranker)
@@ -1092,7 +1217,7 @@ Detected module context:
                 )
             adaptive_mode = self.profile == "adaptive"
             adaptive_incident = adaptive_mode and self._is_incident_query(query)
-            retrieval_queries = self._build_multi_query_searches(
+            doc_retrieval_queries, ticket_retrieval_queries = self._build_multi_query_searches(
                 query,
                 retrieval_query,
                 detected_modules,
@@ -1101,7 +1226,7 @@ Detected module context:
             docs = merge_documents(
                 exact_module_docs,
                 self._retrieve_docs_for_queries(
-                    retrieval_queries,
+                    doc_retrieval_queries,
                     retrieval_query,
                     use_reranker=not adaptive_mode,
                 ),
@@ -1131,7 +1256,7 @@ Detected module context:
                 initial_ticket_limit = 4 if adaptive_mode else (8 if ticket_quality_mode else (12 if detected_modules else 2))
                 ticket_candidates = [
                     doc for doc in self._retrieve_tickets_for_queries(
-                        retrieval_queries,
+                        ticket_retrieval_queries,
                         retrieval_query,
                         final_limit=initial_ticket_limit,
                         child_k=initial_ticket_k,
@@ -1143,7 +1268,7 @@ Detected module context:
                     log.info("Adaptive ticket search is weak; expanding rerank pool from 30 to 80 chunks")
                     ticket_candidates = [
                         doc for doc in self._retrieve_tickets_for_queries(
-                            retrieval_queries,
+                            ticket_retrieval_queries,
                             retrieval_query,
                             final_limit=8,
                             child_k=80,
@@ -1204,7 +1329,10 @@ Detected module context:
                         "input": query,
                         "chat_history": "No previous chat history.",
                         "module_context": module_context or "No module was detected.",
-                        "already_tried_queries": "\n".join(retrieval_queries),
+                        "already_tried_queries": "\n".join([
+                            *(f"docs: {item}" for item in doc_retrieval_queries),
+                            *(f"tickets: {item}" for item in ticket_retrieval_queries),
+                        ]),
                         "docs_context": docs_context[:WIKI_REFLECTION_DOCS_MAX_CHARS],
                         "tickets_context": tickets_context[:WIKI_REFLECTION_TICKETS_MAX_CHARS],
                     })

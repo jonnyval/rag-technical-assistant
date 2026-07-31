@@ -30,6 +30,7 @@
 ## Настройка
 
 Основные параметры лежат в `config.yaml`, секреты и API-ключи - в `.env`. Для Qdrant используется `docker-compose.yml`. Перед запуском ingestion или API проверь, что коллекции и пути к parent-store в конфиге соответствуют текущей базе.
+Структурированный planner поисковых запросов включается отдельно через `retrieval.multi_query.structured_planner.enabled`. При `false` сохраняется прежний общий список multi-query; при `true` planner формирует разные запросы для официальной документации и исторических тикетов. Лимиты задаются параметрами `max_documentation_queries` и `max_ticket_queries`.
 
 ## Типовые команды
 

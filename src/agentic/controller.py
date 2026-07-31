@@ -142,16 +142,46 @@ class AgenticController:
         exact_anchors = sorted(set(re.findall(r"\b[A-Z][A-Z0-9_]{3,}\b", query)) - requested_series_set)
         unresolved_anchors: List[str] = []
 
-        docs, step = self.tools.search_docs(retrieval_query, round_index=0, use_reranker=True)
-        trace.append(step)
-        tool_calls += 1
-        tickets: List[Any] = []
         tickets_enabled = self.engine.retriever.tickets_retriever is not None
-        if tickets_enabled and tool_calls < self.max_tool_calls:
-            tickets, step = self.tools.search_tickets(retrieval_query, round_index=0)
+        if settings.structured_query_planner_enabled:
+            doc_initial_queries, ticket_initial_queries = self.engine._build_multi_query_searches(
+                query,
+                retrieval_query,
+                modules,
+                module_context,
+            )
+            tried_docs.update(item.lower() for item in doc_initial_queries)
+            tried_tickets.update(item.lower() for item in ticket_initial_queries)
+            docs, steps = self.tools.search_docs_multi(
+                doc_initial_queries,
+                rerank_query=retrieval_query,
+                round_index=0,
+                use_reranker=True,
+            )
+            trace.extend(steps)
+            tool_calls += 1
+            tickets: List[Any] = []
+            if tickets_enabled and tool_calls < self.max_tool_calls:
+                tickets, steps = self.tools.search_tickets_multi(
+                    ticket_initial_queries,
+                    rerank_query=retrieval_query,
+                    round_index=0,
+                )
+                trace.extend(steps)
+                tool_calls += 1
+        else:
+            docs, step = self.tools.search_docs(
+                retrieval_query,
+                round_index=0,
+                use_reranker=True,
+            )
             trace.append(step)
             tool_calls += 1
-
+            tickets: List[Any] = []
+            if tickets_enabled and tool_calls < self.max_tool_calls:
+                tickets, step = self.tools.search_tickets(retrieval_query, round_index=0)
+                trace.append(step)
+                tool_calls += 1
         if exact_anchors and tool_calls < self.max_tool_calls:
             requested_series = sorted(set(re.findall(r"\bR\d{3}S?\b", query, flags=re.IGNORECASE)))
             exact_query = self._build_exact_identifier_query(query, exact_anchors, requested_series)
