@@ -77,6 +77,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--summarize-only", action="store_true")
     parser.add_argument(
+        "--query-aware-rerank",
+        choices=("config", "enabled", "disabled"),
+        default="config",
+        help="Override retrieval.multi_query.structured_planner.query_aware_rerank.enabled.",
+    )
+    parser.add_argument(
         "--judge-provider",
         choices=("local", "gemini", "groq"),
         default="gemini",
@@ -178,27 +184,39 @@ def serialize_documents(
     return records, "\n\n".join(blocks)
 
 
-def trace_queries(
+def trace_query_groups(
     benchmark_item: dict[str, Any],
     fallback_query: str,
-) -> tuple[list[str], list[str]]:
+) -> dict[str, list[str]]:
+    """Separate the initial RRF batch from later one-query agent follow-ups."""
     trace = (
         benchmark_item.get("runs", {})
         .get("agentic", {})
         .get("agent", {})
         .get("trace", [])
     )
-    docs: list[str] = []
-    tickets: list[str] = []
+    groups = {
+        "docs_initial": [],
+        "tickets_initial": [],
+        "docs_followup": [],
+        "tickets_followup": [],
+    }
+    initial_reason = "initial structured query plan with RRF fusion"
     for step in trace:
         query = " ".join(str(step.get("query") or "").split()).strip()
-        if not query:
+        tool = step.get("tool")
+        if not query or tool not in {"search_docs", "search_tickets"}:
             continue
-        if step.get("tool") == "search_docs" and query not in docs:
-            docs.append(query)
-        elif step.get("tool") == "search_tickets" and query not in tickets:
-            tickets.append(query)
-    return docs or [fallback_query], tickets or [fallback_query]
+        source = "docs" if tool == "search_docs" else "tickets"
+        phase = "initial" if step.get("reason") == initial_reason else "followup"
+        target = groups[f"{source}_{phase}"]
+        if query not in target:
+            target.append(query)
+    if not groups["docs_initial"] and not groups["docs_followup"]:
+        groups["docs_initial"] = [fallback_query]
+    if not groups["tickets_initial"] and not groups["tickets_followup"]:
+        groups["tickets_initial"] = [fallback_query]
+    return groups
 
 
 def replay_retrieval(
@@ -206,9 +224,10 @@ def replay_retrieval(
     question: str,
     benchmark_item: dict[str, Any],
 ) -> dict[str, Any]:
+    """Replay production RRF/rerank for the initial batch plus agent follow-ups."""
     modules = detect_modules_in_query(question)
     retrieval_query = build_module_enriched_query(question, modules)
-    doc_queries, ticket_queries = trace_queries(benchmark_item, retrieval_query)
+    query_groups = trace_query_groups(benchmark_item, retrieval_query)
     retriever = engine.retriever
 
     vector_candidates: list[Document] = []
@@ -216,22 +235,91 @@ def replay_retrieval(
     parent_docs: list[Document] = []
     parent_tickets: list[Document] = []
 
-    docs_k = int(retriever.docs_retriever.search_kwargs.get("k", 24))
-    for query in doc_queries:
+    def replay_initial(
+        queries: list[str],
+        *,
+        source: Literal["docs", "tickets"],
+        child_k: int,
+        final_limit: int,
+    ) -> tuple[list[Document], list[Document]]:
+        parent_retriever = (
+            retriever.docs_retriever if source == "docs" else retriever.tickets_retriever
+        )
+        results = [
+            retriever._search_children(parent_retriever, query, child_k, False, source)
+            for query in queries
+        ]
+        for result in results:
+            vector_candidates.extend(result)
+        if len(queries) > 1:
+            multi_config = engine._multi_query_options()
+            rrf_k, candidate_limit = multi_config
+            children = retriever._fuse_multi_query_children(
+                results,
+                queries=queries,
+                rrf_k=rrf_k,
+                candidate_limit=max(candidate_limit, child_k if source == "tickets" else 0),
+            )
+            ranked = retriever._rank_multi_query_children(
+                retrieval_query,
+                children,
+                limit=len(children),
+                use_reranker=True,
+            )
+            if retriever.query_aware_rerank:
+                ranked = retriever._select_diverse_children(
+                    ranked,
+                    queries,
+                    limit=(final_limit if source == "docs" else len(ranked)),
+                )
+        else:
+            children = results[0] if results else []
+            ranked = retriever._rank_children(
+                retrieval_query,
+                children,
+                limit=len(children),
+                use_reranker=True,
+            )
+        selected = (
+            ranked[:final_limit]
+            if source == "docs"
+            else retriever._unique_parent_children(ranked, final_limit)
+        )
+        parents = retriever._fetch_parents(parent_retriever, selected, source)
+        return selected, parents
+
+    initial_docs = query_groups["docs_initial"]
+    if initial_docs:
+        selected, incoming = replay_initial(
+            initial_docs,
+            source="docs",
+            child_k=int(retriever.docs_retriever.search_kwargs.get("k", 24)),
+            final_limit=retriever.top_k_final,
+        )
+        reranked_selection.extend(selected)
+        parent_docs = merge_documents(parent_docs, incoming)
+
+    initial_tickets = query_groups["tickets_initial"]
+    if initial_tickets:
+        selected, incoming = replay_initial(
+            initial_tickets,
+            source="tickets",
+            child_k=60,
+            final_limit=8,
+        )
+        reranked_selection.extend(selected)
+        parent_tickets = engine._merge_ticket_documents(parent_tickets, incoming)
+
+    for query in query_groups["docs_followup"]:
         children = retriever._search_children(
             retriever.docs_retriever,
             query,
-            docs_k,
+            int(retriever.docs_retriever.search_kwargs.get("k", 24)),
             False,
             "docs",
         )
         vector_candidates.extend(children)
-        ranked = retriever._rank_children(
-            query,
-            children,
-            limit=len(children),
-            use_reranker=True,
-        )
+        ranked = retriever._rank_children(query, children, limit=len(children), use_reranker=True)
         selected = ranked[: retriever.top_k_final]
         reranked_selection.extend(selected)
         parent_docs = merge_documents(
@@ -239,30 +327,22 @@ def replay_retrieval(
             retriever._fetch_parents(retriever.docs_retriever, selected, "docs"),
         )
 
-    tickets_k = 60
-    for query in ticket_queries:
+    for query in query_groups["tickets_followup"]:
         children = retriever._search_children(
             retriever.tickets_retriever,
             query,
-            tickets_k,
+            60,
             False,
             "tickets",
         )
         vector_candidates.extend(children)
-        ranked = retriever._rank_children(
-            query,
-            children,
-            limit=len(children),
-            use_reranker=True,
-        )
+        ranked = retriever._rank_children(query, children, limit=len(children), use_reranker=True)
         selected = retriever._unique_parent_children(ranked, 8)
         reranked_selection.extend(selected)
-        incoming = retriever._fetch_parents(
-            retriever.tickets_retriever,
-            selected,
-            "tickets",
+        parent_tickets = engine._merge_ticket_documents(
+            parent_tickets,
+            retriever._fetch_parents(retriever.tickets_retriever, selected, "tickets"),
         )
-        parent_tickets = engine._merge_ticket_documents(parent_tickets, incoming)
 
     parent_docs = filter_documents_by_requested_series(question, parent_docs)
     parent_tickets = filter_documents_by_requested_series(question, parent_tickets)
@@ -294,7 +374,7 @@ def replay_retrieval(
         max_doc_chars=1400,
     )
     return {
-        "queries": {"docs": doc_queries, "tickets": ticket_queries},
+        "queries": query_groups,
         "vector_candidates": deduplicate(vector_candidates),
         "reranked_selection": deduplicate(reranked_selection),
         "final_documents": {
@@ -303,7 +383,6 @@ def replay_retrieval(
         },
         "final_context": f"{docs_context}\n\n{tickets_context}".strip(),
     }
-
 
 def build_judge(provider: str, model: str):
     from src.config import settings
@@ -418,6 +497,7 @@ def local_recall_judgement(
     threshold: float,
     prefilter_limit: int,
 ) -> dict[str, Any]:
+    """Judge all point/stage pairs in two batches: embeddings, then CrossEncoder."""
     import numpy as np
 
     stages = {
@@ -436,51 +516,79 @@ def local_recall_judgement(
             for index, chunk in enumerate(split_text(agentic_answer), start=1)
         ],
     }
-    stage_vectors = {
-        stage: (
-            np.asarray(
-                embeddings.embed_documents([text for _, text in entries]),
-                dtype=np.float32,
-            )
-            if entries
-            else None
-        )
-        for stage, entries in stages.items()
-    }
-    points: list[dict[str, Any]] = []
-    for point_index, point in enumerate(expected_points, start=1):
-        point_vector = np.asarray(embeddings.embed_query(point), dtype=np.float32)
-        stage_hits: dict[str, bool] = {}
-        stage_scores: dict[str, float] = {}
-        supporting_ids: list[str] = []
+
+    flattened_entries: list[str] = []
+    stage_slices: dict[str, tuple[int, int]] = {}
+    for stage, entries in stages.items():
+        start_index = len(flattened_entries)
+        flattened_entries.extend(text for _, text in entries)
+        stage_slices[stage] = (start_index, len(flattened_entries))
+    embedded_texts = (
+        np.asarray(embeddings.embed_documents(flattened_entries), dtype=np.float32)
+        if flattened_entries
+        else np.empty((0, 0), dtype=np.float32)
+    )
+    point_vectors = (
+        np.asarray(embeddings.embed_documents(expected_points), dtype=np.float32)
+        if expected_points
+        else np.empty((0, 0), dtype=np.float32)
+    )
+
+    tasks: list[tuple[int, str, list[tuple[str, str]]]] = []
+    all_pairs: list[list[str]] = []
+    for point_offset, (point, point_vector) in enumerate(zip(expected_points, point_vectors)):
         for stage, entries in stages.items():
             if not entries:
-                stage_hits[stage] = False
-                stage_scores[stage] = 0.0
                 continue
-            similarities = stage_vectors[stage] @ point_vector
+            slice_start, slice_end = stage_slices[stage]
+            similarities = embedded_texts[slice_start:slice_end] @ point_vector
             selected_indices = np.argsort(similarities)[::-1][
                 : max(1, min(prefilter_limit, len(entries)))
             ]
             selected_entries = [entries[int(index)] for index in selected_indices]
-            scores = reranker.predict(
-                [[point, text] for _, text in selected_entries],
-                show_progress_bar=False,
-            )
-            scored = [
-                (entry_id, float(score))
-                for (entry_id, _), score in zip(selected_entries, scores)
-            ]
-            best_id, best_score = max(scored, key=lambda item: item[1])
-            stage_scores[stage] = round(best_score, 4)
-            stage_hits[stage] = best_score >= threshold
-            if stage in {"vector_candidates", "reranked_selection"} and best_score >= threshold:
-                supporting_ids.append(best_id)
+            tasks.append((point_offset, stage, selected_entries))
+            all_pairs.extend([[point, content] for _, content in selected_entries])
+
+    all_scores = (
+        [
+            float(score)
+            for score in reranker.predict(all_pairs, show_progress_bar=False)
+        ]
+        if all_pairs
+        else []
+    )
+    hits_by_point = [dict() for _ in expected_points]
+    scores_by_point = [dict() for _ in expected_points]
+    supporting_by_point: list[list[str]] = [[] for _ in expected_points]
+    score_offset = 0
+    for point_offset, stage, selected_entries in tasks:
+        task_scores = all_scores[score_offset : score_offset + len(selected_entries)]
+        score_offset += len(selected_entries)
+        scored = [
+            (entry_id, score)
+            for (entry_id, _), score in zip(selected_entries, task_scores)
+        ]
+        best_id, best_score = max(scored, key=lambda item: item[1])
+        hits_by_point[point_offset][stage] = best_score >= threshold
+        scores_by_point[point_offset][stage] = round(best_score, 4)
+        if stage in {"vector_candidates", "reranked_selection"} and best_score >= threshold:
+            supporting_by_point[point_offset].append(best_id)
+
+    points: list[dict[str, Any]] = []
+    for point_offset, _ in enumerate(expected_points):
+        stage_hits = {
+            stage: hits_by_point[point_offset].get(stage, False)
+            for stage in stages
+        }
+        stage_scores = {
+            stage: scores_by_point[point_offset].get(stage, 0.0)
+            for stage in stages
+        }
         points.append(
             {
-                "point_index": point_index,
+                "point_index": point_offset + 1,
                 **stage_hits,
-                "supporting_ids": supporting_ids,
+                "supporting_ids": supporting_by_point[point_offset],
                 "confidence": "medium",
                 "explanation": (
                     "Local CrossEncoder semantic-relevance proxy; "
@@ -625,6 +733,12 @@ def main() -> None:
 
     log.info("Initialize retrieval engine...")
     engine = RAGEngine("deep")
+    if args.query_aware_rerank != "config":
+        engine.retriever.query_aware_rerank = args.query_aware_rerank == "enabled"
+        log.info(
+            "Query-aware rerank override: %s",
+            engine.retriever.query_aware_rerank,
+        )
     judge = (
         None
         if args.judge_provider == "local"
@@ -732,6 +846,7 @@ def main() -> None:
             "candidate_chars": args.candidate_chars,
             "local_threshold": args.local_threshold,
             "local_prefilter_limit": args.local_prefilter_limit,
+            "query_aware_rerank": engine.retriever.query_aware_rerank,
         }
         stored["questions"] = ordered
         atomic_write_json(results_path, stored)

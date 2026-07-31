@@ -183,6 +183,14 @@ retrieval:
       enabled: false
       max_documentation_queries: 3
       max_ticket_queries: 3
+      query_aware_rerank:
+        # Experimental: score RRF candidates against both the original question
+        # and the generated queries that retrieved them.
+        enabled: false
+        original_query_weight: 1.0
+        generated_query_weight: 1.0
+        max_reserved_queries: 2
+        per_query_quota: 1
   diagnostic_sgr:
     # Второй SGR-этап только для диагностических вопросов: оценивает доказательства и при необходимости уточняет поиск.
     enabled: true

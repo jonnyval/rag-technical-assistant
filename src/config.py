@@ -254,6 +254,15 @@ class Settings:
     @property
     def structured_query_planner_enabled(self) -> bool:
         return bool(self.structured_query_planner_config.get("enabled", False))
+
+    @property
+    def query_aware_rerank_config(self) -> Dict[str, Any]:
+        config = self.structured_query_planner_config.get("query_aware_rerank", {})
+        return config if isinstance(config, dict) else {}
+
+    @property
+    def query_aware_rerank_enabled(self) -> bool:
+        return bool(self.query_aware_rerank_config.get("enabled", False))
     
     @property
     def diagnostic_sgr_config(self) -> Dict[str, Any]:

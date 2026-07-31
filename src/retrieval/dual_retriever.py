@@ -70,6 +70,11 @@ class DualRetriever(BaseRetriever):
     rerank_threshold: float = 0.05
     use_litm:         bool  = True
     tickets_weight:   float = 0.7
+    query_aware_rerank: bool = False
+    original_query_weight: float = 1.0
+    generated_query_weight: float = 1.0
+    max_reserved_queries: int = 2
+    per_query_quota: int = 1
 
     equipment_filter: Optional[List[str]] = Field(
         default=None,
@@ -237,23 +242,159 @@ class DualRetriever(BaseRetriever):
         self,
         query_results: List[List[Document]],
         *,
+        queries: List[str] | None = None,
         rrf_k: int,
         candidate_limit: int,
     ) -> List[Document]:
-        """Fuse ranked vector-search lists with Reciprocal Rank Fusion."""
+        """Fuse ranked lists and retain which query variants found each chunk."""
         fused: Dict[tuple, Document] = {}
         scores: Dict[tuple, float] = {}
-        for result in query_results:
+        query_ranks: Dict[tuple, Dict[str, int]] = {}
+        result_queries = queries or [""] * len(query_results)
+        for query, result in zip(result_queries, query_results):
             for rank, document in enumerate(result, start=1):
                 key = self._multi_query_child_key(document)
                 fused.setdefault(key, document)
                 scores[key] = scores.get(key, 0.0) + 1.0 / (rrf_k + rank)
+                if query:
+                    ranks = query_ranks.setdefault(key, {})
+                    ranks[query] = min(rank, ranks.get(query, rank))
 
         ordered = sorted(fused, key=lambda key: scores[key], reverse=True)[:candidate_limit]
         children = [fused[key] for key in ordered]
+        original_query = result_queries[0] if result_queries else ""
         for key, child in zip(ordered, children):
+            ranks = query_ranks.get(key, {})
             child.metadata["fusion_score"] = scores[key]
+            child.metadata["matched_queries"] = list(ranks)
+            generated_ranks = {
+                query: rank for query, rank in ranks.items() if query != original_query
+            }
+            if generated_ranks:
+                origin_query = min(generated_ranks, key=generated_ranks.get)
+            elif ranks:
+                origin_query = min(ranks, key=ranks.get)
+            else:
+                origin_query = ""
+            if origin_query:
+                child.metadata["origin_query"] = origin_query
+                child.metadata["origin_query_rank"] = ranks[origin_query]
         return children
+
+    def _rank_multi_query_children(
+        self,
+        original_query: str,
+        children: List[Document],
+        *,
+        limit: int,
+        use_reranker: bool = True,
+    ) -> List[Document]:
+        """Score each RRF candidate against the question and queries that found it."""
+        if not self.query_aware_rerank or not use_reranker or self.reranker_model is None:
+            return self._rank_children(
+                original_query,
+                children,
+                limit=limit,
+                use_reranker=use_reranker,
+            )
+        if not children:
+            return []
+
+        original_pairs = [[original_query, document.page_content] for document in children]
+        generated_pairs: List[List[str]] = []
+        generated_owners: List[tuple[int, str]] = []
+        for index, document in enumerate(children):
+            query = str(document.metadata.get("origin_query") or "").strip()
+            if query and query != original_query:
+                generated_pairs.append([query, document.page_content])
+                generated_owners.append((index, query))
+
+        all_pairs = original_pairs + generated_pairs
+        with TimeProfiler(f"Query-aware CrossEncoder Reranking ({len(all_pairs)} pairs)"):
+            all_scores = [float(score) for score in self.reranker_model.predict(all_pairs)]
+        original_scores = all_scores[: len(original_pairs)]
+        generated_scores = all_scores[len(original_pairs) :]
+
+        best_generated: Dict[int, tuple[float, str]] = {}
+        for (index, query), score in zip(generated_owners, generated_scores):
+            if index not in best_generated or score > best_generated[index][0]:
+                best_generated[index] = (score, query)
+
+        scored: List[Document] = []
+        for index, (document, original_score) in enumerate(zip(children, original_scores)):
+            generated_score, generated_query = best_generated.get(
+                index,
+                (original_score, original_query),
+            )
+            weighted_original = original_score * self.original_query_weight
+            weighted_generated = generated_score * self.generated_query_weight
+            if weighted_generated > weighted_original:
+                effective_score = weighted_generated
+                rerank_query = generated_query
+            else:
+                effective_score = weighted_original
+                rerank_query = original_query
+            document.metadata["original_rerank_score"] = original_score
+            document.metadata["query_rerank_score"] = generated_score
+            document.metadata["rerank_query"] = rerank_query
+            document.metadata["rerank_score"] = effective_score
+            if effective_score >= self.rerank_threshold:
+                scored.append(document)
+
+        scored.sort(
+            key=lambda document: (
+                document.metadata.get("rerank_score", 0.0),
+                document.metadata.get("fusion_score", 0.0),
+            ),
+            reverse=True,
+        )
+        return scored[:limit]
+
+    def _select_diverse_children(
+        self,
+        ranked: List[Document],
+        queries: List[str],
+        *,
+        limit: int,
+    ) -> List[Document]:
+        """Reserve a small quota for generated-query facets, then fill by score."""
+        if not self.query_aware_rerank or limit <= 0:
+            return ranked[:limit]
+        selected: List[Document] = []
+        selected_keys = set()
+        generated_queries = [
+            query for query in queries[1:] if query
+        ][: max(0, self.max_reserved_queries)]
+        quota = max(0, self.per_query_quota)
+        if quota == 0:
+            return ranked[:limit]
+        for query in generated_queries:
+            taken = 0
+            for document in ranked:
+                key = self._multi_query_child_key(document)
+                if (
+                    key in selected_keys
+                    or query not in document.metadata.get("matched_queries", [])
+                    or document.metadata.get("rerank_query") != query
+                ):
+                    continue
+                selected.append(document)
+                selected_keys.add(key)
+                taken += 1
+                if taken >= quota or len(selected) >= limit:
+                    break
+            if len(selected) >= limit:
+                return selected
+
+        for document in ranked:
+            key = self._multi_query_child_key(document)
+            if key in selected_keys:
+                continue
+            selected.append(document)
+            selected_keys.add(key)
+            if len(selected) >= limit:
+                break
+        return selected
 
     def retrieve_docs_multi_query(
         self,
@@ -271,10 +412,24 @@ class DualRetriever(BaseRetriever):
         k = self.docs_retriever.search_kwargs.get("k", 30)
         children = self._fuse_multi_query_children(
             [self._search_children(self.docs_retriever, query, k, False, "docs") for query in unique_queries],
+            queries=unique_queries,
             rrf_k=rrf_k,
             candidate_limit=candidate_limit,
         )
-        ranked = self._rank_children(rerank_query, children, use_reranker=use_reranker)
+        if self.query_aware_rerank:
+            ranked_pool = self._rank_multi_query_children(
+                rerank_query,
+                children,
+                limit=len(children),
+                use_reranker=use_reranker,
+            )
+            ranked = self._select_diverse_children(
+                ranked_pool,
+                unique_queries,
+                limit=self.top_k_final,
+            )
+        else:
+            ranked = self._rank_children(rerank_query, children, use_reranker=use_reranker)
         if not use_reranker:
             for child in ranked:
                 child.metadata["rerank_score"] = child.metadata.get("fusion_score", 0.0)
@@ -305,10 +460,22 @@ class DualRetriever(BaseRetriever):
         k = child_k or self.tickets_retriever.search_kwargs.get("k", 30)
         children = self._fuse_multi_query_children(
             [self._search_children(self.tickets_retriever, query, k, False, "tickets") for query in unique_queries],
+            queries=unique_queries,
             rrf_k=rrf_k,
             candidate_limit=candidate_limit,
         )
-        ranked = self._rank_children(rerank_query, children, limit=len(children), use_reranker=use_reranker)
+        ranked = self._rank_multi_query_children(
+            rerank_query,
+            children,
+            limit=len(children),
+            use_reranker=use_reranker,
+        )
+        if self.query_aware_rerank:
+            ranked = self._select_diverse_children(
+                ranked,
+                unique_queries,
+                limit=len(ranked),
+            )
         if not use_reranker:
             for child in ranked:
                 child.metadata["rerank_score"] = child.metadata.get("fusion_score", 0.0)
@@ -662,6 +829,7 @@ def build_dual_retriever(
     docs_retriever    = _make_parent_retriever(docs_backend_name)
     tickets_retriever = _make_parent_retriever(tickets_backend_name)
 
+    query_aware_config = settings.query_aware_rerank_config
     return DualRetriever(
         docs_retriever=docs_retriever,
         tickets_retriever=tickets_retriever,
@@ -669,4 +837,9 @@ def build_dual_retriever(
         top_k_final=top_k_final or settings.top_k_final,
         rerank_threshold=rerank_threshold if rerank_threshold is not None else settings.rerank_threshold,
         use_litm=use_litm if use_litm is not None else settings.use_litm,
+        query_aware_rerank=settings.query_aware_rerank_enabled,
+        original_query_weight=float(query_aware_config.get("original_query_weight", 1.0)),
+        generated_query_weight=float(query_aware_config.get("generated_query_weight", 1.0)),
+        max_reserved_queries=max(0, int(query_aware_config.get("max_reserved_queries", 2))),
+        per_query_quota=max(0, int(query_aware_config.get("per_query_quota", 1))),
     )
