@@ -20,6 +20,7 @@ from langchain_core.runnables import Runnable, RunnablePassthrough
 from src.config import settings
 from src.context_formatting import (
     SourceReference,
+    format_adaptive_search_body,
     format_docs,
     format_source_references,
     format_ticket_docs,
@@ -72,6 +73,68 @@ WIKI_REFLECTION_TICKETS_MAX_CHARS = 1400
 WIKI_ITERATIVE_SKIP_MIN_DOCS = 2
 WIKI_ITERATIVE_SKIP_MIN_DOC_CHARS = 2200
 
+ADAPTIVE_INFORMATION_PROMPT = """
+Ты — информационная поисковая система RegLab для специалистов технической поддержки.
+Ты не инженер техподдержки, не советчик и не принимаешь решение по текущей ситуации.
+Твоя задача — полно и компактно пересказать факты из найденной документации и отдельно описать, как аналогичные ситуации завершались в исторических обращениях.
+
+Верни валидный JSON по схеме AdaptiveInformationResponse. Все пользовательские поля заполняй по-русски; технические обозначения сохраняй без изменений.
+
+Приоритет источников:
+1. Официальная документация — источник фактов, параметров, ограничений и документированных процедур.
+2. Тикеты — только исторический опыт: что наблюдалось и как конкретное обращение было решено или закрыто.
+
+Правила доказательности:
+- Каждый технический факт сопровождай меткой [D…] или [T…] рядом с утверждением.
+- Не добавляй сведения из общих знаний модели и не соединяй разрозненные фрагменты в новую причинно-следственную связь.
+- Не переноси сведения между моделями, сериями и версиями без прямого подтверждения совместимости.
+- Если прямого ответа нет, точно назови, какой факт не подтверждён найденными источниками.
+- Тикет не подтверждает универсальное решение. Формулируй только в прошедшем времени: «в обращении [T…] наблюдалось…», «было решено…».
+
+Стиль информационного поиска:
+- Не давай рекомендаций, плана диагностики или чек-листа действий для текущей ситуации.
+- Не используй обращения и команды: «проверьте», «сделайте», «убедитесь», «попробуйте», «обратитесь», «соберите», «следует», «рекомендуется».
+- Если пользователь спрашивает «что делать», вместо совета сообщи: что прямо описано документацией и что делали в исторических тикетах.
+- Документированную процедуру передавай полностью и в исходном порядке, но как описание источника: «Документация задаёт следующий порядок…».
+- Не добавляй типовые причины, предупреждения и уточняющие вопросы ради объёма.
+- Раскрывай все относящиеся к вопросу различающиеся факты, но не повторяй одну мысль разными словами.
+- Если несколько документов описывают одну процедуру, объедини их в один порядок действий и поставь рядом все подтверждающие [D…]. Не пересказывай эту процедуру повторно по каждому источнику; отдельно добавь только реальные различия и дополнительные условия.
+
+Поля JSON:
+- docs_answer: самодостаточная фактическая выжимка только из официальной документации. Для процедуры сохраняй Markdown и отдельную строку на каждый шаг.
+- similar_tickets: только действительно похожие обращения. Для каждого укажи ticket_id, ситуацию, фактическое решение/исход и конкретное сходство.
+- draft_private_comment: та же информационная выжимка, а не черновик ответа и не рекомендация.
+- evidence_notes: только проверяемые тезисы с доступными source_ids; если они не нужны, верни [].
+- recommended_questions: всегда [].
+- internal_notes: всегда [].
+- missing_context: одна конкретная фраза только о факте, которого нет в найденных источниках; иначе «Не указано».
+- confidence: оцени только полноту и прямоту найденных доказательств.
+
+Вопрос:
+{input}
+
+Режим доказательности:
+{strict_evidence_context}
+
+Предупреждения о соответствии оборудования:
+{equipment_mismatch_context}
+
+Определённые модули:
+{module_context}
+
+Официальная документация:
+{docs_context}
+
+Источники документации:
+{doc_sources_context}
+
+Исторические обращения:
+{tickets_context}
+
+Источники исторических обращений:
+{ticket_sources_context}
+"""
+
 RAG_PROFILES: Dict[str, Dict[str, Any]] = {
     "fast": {
         "use_reranker": False,
@@ -100,6 +163,14 @@ for _profile_name, _profile_overrides in getattr(settings, "_raw_config", {}).ge
     if isinstance(_profile_overrides, dict):
         base_profile = RAG_PROFILES.get(_profile_name, RAG_PROFILES["deep"])
         RAG_PROFILES[_profile_name] = {**base_profile, **_profile_overrides}
+
+
+def apply_adaptive_information_role(response: Any) -> Any:
+    """Make Adaptive output a neutral evidence digest instead of support advice."""
+    response.recommended_questions = []
+    response.internal_notes = []
+    response.draft_private_comment = format_adaptive_search_body(response)
+    return response
 
 # ==========================================
 # 🧩 SGR СХЕМЫ (Schema-Guided Reasoning)
@@ -228,6 +299,62 @@ class SupportPrivateResponse(BaseModel):
         if isinstance(value, list):
             return [str(item) for item in value if item is not None and str(item).strip()]
         return [str(value)]
+
+class AdaptiveSimilarTicketSummary(SimilarTicketSummary):
+    """Accept common provider field names without losing retrieved ticket facts."""
+
+    problem_summary: str = Field(
+        default="",
+        validation_alias=AliasChoices("problem_summary", "problem", "situation"),
+        description="Фактическая ситуация из исторического обращения",
+    )
+    solution_summary: str = Field(
+        default="",
+        validation_alias=AliasChoices("solution_summary", "solution", "resolution"),
+        description="Как это историческое обращение было решено или закрыто",
+    )
+    relevance_reason: str = Field(
+        default="",
+        validation_alias=AliasChoices("relevance_reason", "similarity_reason", "similarity"),
+        description="Конкретное сходство с текущим вопросом",
+    )
+
+
+class AdaptiveInformationResponse(SupportPrivateResponse):
+    """Structured result for the adaptive information-search profile."""
+
+    user_intent: str = Field(default="", description="Краткое описание информационного запроса пользователя")
+    docs_answer: str = Field(description="Все релевантные факты из документации с точными ссылками [D...] без советов от модели")
+    similar_tickets: List[AdaptiveSimilarTicketSummary] = Field(
+        default_factory=list,
+        description="Только фактическое описание проблемы и решения из похожих исторических обращений",
+    )
+    evidence_notes: List[EvidenceNote] = Field(
+        default_factory=list,
+        description="Проверяемые тезисы с source_ids; пустой список допустим и предпочтителен",
+    )
+    recommended_questions: List[str] = Field(default_factory=list, description="Всегда пустой список")
+    internal_notes: List[str] = Field(default_factory=list, description="Всегда пустой список")
+    draft_private_comment: str = Field(
+        description="Информационная сводка: факты документации и отдельно опыт похожих обращений; без рекомендаций"
+    )
+
+    @field_validator("evidence_notes", mode="before")
+    @classmethod
+    def normalize_adaptive_evidence_notes(cls, value):
+        """Tolerate providers returning compact cited strings instead of objects."""
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            value = [value]
+        normalized = []
+        for item in value:
+            if isinstance(item, str):
+                source_ids = re.findall(r"\b[DT]\d+\b", item, flags=re.IGNORECASE)
+                normalized.append({"claim": item.strip(), "source_ids": source_ids})
+            else:
+                normalized.append(item)
+        return normalized
 
 
 class WikiChatResponse(BaseModel):
@@ -784,14 +911,24 @@ class RAGEngine:
 - Не заполняй recommended_questions и internal_notes ради полноты: пустой список предпочтительнее выдуманных проверок.
 """)
 
+            if self.profile == "adaptive":
+                support_prompt_template = ChatPromptTemplate.from_template(
+                    ADAPTIVE_INFORMATION_PROMPT
+                )
+
+            support_response_schema = (
+                AdaptiveInformationResponse
+                if self.profile == "adaptive"
+                else SupportPrivateResponse
+            )
             if settings.active_llm == "gigachat":
                 support_structured_llms = [
-                    candidate.with_structured_output(SupportPrivateResponse)
+                    candidate.with_structured_output(support_response_schema)
                     for candidate in llm_candidates
                 ]
             else:
                 support_structured_llms = [
-                    candidate.with_structured_output(SupportPrivateResponse, method="json_mode")
+                    candidate.with_structured_output(support_response_schema, method="json_mode")
                     for candidate in llm_candidates
                 ]
             support_structured_llm = (
@@ -1359,11 +1496,16 @@ Detected module context:
             response = apply_definition_guard(response, query, docs_context, doc_sources)
             response = apply_transformation_evidence_guard(response, query, docs_context, doc_sources)
             response = apply_entity_coverage_guard(response, query, docs_context)
-            response = apply_diagnostic_scope_guard(response, query, docs_context)
+            response = apply_diagnostic_scope_guard(
+                response,
+                query,
+                docs_context,
+                information_mode=adaptive_mode,
+            )
             response, doc_sources, ticket_sources = apply_response_provenance(
                 response, doc_sources, ticket_sources
             )
-            if detected_modules:
+            if detected_modules and not adaptive_mode:
                 response.docs_answer = ensure_module_block(response.docs_answer, detected_modules)
                 response.draft_private_comment = ensure_module_block(response.draft_private_comment, detected_modules)
             response.doc_sources = doc_sources
@@ -1379,6 +1521,8 @@ Detected module context:
                     ticket for ticket in response.similar_tickets
                     if (ticket.relevance_reason or "").strip()
                 ]
+            if adaptive_mode:
+                response = apply_adaptive_information_role(response)
 
             elapsed = time.perf_counter() - start
             log.info(

@@ -1,3 +1,4 @@
+import re
 from typing import Any, List
 from urllib.parse import urljoin
 
@@ -255,3 +256,59 @@ def format_chat_sources_footer(
 
     return "".join(blocks)
 
+def format_adaptive_search_body(response: Any) -> str:
+    """Render Adaptive as a factual search digest, never as support advice."""
+    docs_answer = str(getattr(response, "docs_answer", "") or "").strip()
+    similar_tickets = list(getattr(response, "similar_tickets", None) or [])
+    ticket_sources = list(getattr(response, "ticket_sources", None) or [])
+    blocks: List[str] = []
+
+    if docs_answer:
+        numbered_procedure = bool(re.search(r"(?m)^\s*\d+[.)]\s+", docs_answer))
+        has_documentary_frame = "документац" in docs_answer.lower()
+        if numbered_procedure and not has_documentary_frame:
+            docs_answer = "Документация задаёт следующий порядок:\n\n" + docs_answer
+        blocks.append(f"**По документации**\n\n{docs_answer}")
+
+    ticket_items: List[str] = []
+    for ticket in similar_tickets:
+        ticket_id = str(getattr(ticket, "ticket_id", "") or "").strip()
+        problem = str(getattr(ticket, "problem_summary", "") or "").strip()
+        solution = str(getattr(ticket, "solution_summary", "") or "").strip()
+        relevance = str(getattr(ticket, "relevance_reason", "") or "").strip()
+        if not (problem or solution):
+            continue
+
+        source_id = ""
+        for source in ticket_sources:
+            source_text = " ".join(
+                str(value or "")
+                for value in (source.title, source.source_file, source.url)
+            ).upper()
+            if ticket_id and ticket_id.upper() in source_text:
+                source_id = str(source.source_id or "").strip()
+                break
+        marker = f"[{source_id}] " if source_id else ""
+        label = ticket_id or "Историческое обращение"
+        details: List[str] = []
+        if problem:
+            details.append(f"Ситуация: {problem}")
+        if solution:
+            details.append(f"Как было решено: {solution}")
+        if relevance:
+            details.append(f"Почему обращение похоже: {relevance}")
+        ticket_items.append(f"- {marker}**{label}** — " + " ".join(details))
+
+    if ticket_items:
+        blocks.append("**Как решали в похожих обращениях**\n\n" + "\n".join(ticket_items))
+
+    missing_context = str(getattr(response, "missing_context", "") or "").strip()
+    ignored_missing = {
+        "", "нет", "none", "не указано", "достаточно", "все необходимое найдено",
+    }
+    if missing_context.lower().rstrip(".") not in ignored_missing:
+        blocks.append(f"**Что не подтверждено найденными источниками**\n\n{missing_context}")
+
+    if not blocks:
+        return "В найденных источниках нет подтверждённой информации по вопросу."
+    return "\n\n".join(blocks)

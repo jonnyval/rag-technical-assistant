@@ -31,7 +31,10 @@ from src.agentic.pipeline import AgenticRAG  # noqa: E402
 from src.config import settings  # noqa: E402
 from src.engine import RAGEngine  # noqa: E402
 from src.logger import log  # noqa: E402
-from src.context_formatting import format_chat_sources_footer  # noqa: E402
+from src.context_formatting import (  # noqa: E402
+    format_adaptive_search_body,
+    format_chat_sources_footer,
+)
 try:
     from faq_pipeline.search.ticket_vector_search import (  # noqa: E402
         DEFAULT_INDEX_DIR,
@@ -498,6 +501,14 @@ def _format_support_answer(result: Any) -> str:
         getattr(result, "doc_sources", []),
         getattr(result, "ticket_sources", []),
     )
+
+def _format_adaptive_answer(result: Any) -> str:
+    """Evidence digest for Adaptive: documentation plus historical outcomes."""
+    return format_adaptive_search_body(result) + format_chat_sources_footer(
+        getattr(result, "doc_sources", []),
+        getattr(result, "ticket_sources", []),
+    )
+
 
 def _format_wiki_chat_answer(result: Any) -> str:
     answer = _strip_wiki_recommendation_sections(getattr(result, "final_answer", ""))
@@ -985,7 +996,7 @@ async def list_models() -> dict:
         ),
         (
             ADAPTIVE_MODEL_ID,
-            "RegLab AI Adaptive: fast documentation search and adaptive ticket reranking for incidents",
+            "RegLab AI Adaptive: factual documentation search with historical ticket outcomes",
         ),
     ]
     if settings.agentic_rag_enabled:
@@ -1101,7 +1112,11 @@ async def chat_completions(request: Request, payload: ChatCompletionRequest) -> 
             result = await run_in_threadpool(engine.process_support_ticket, query)
 
         created = int(time.time())
-        full_answer = _format_support_answer(result)
+        full_answer = (
+            _format_adaptive_answer(result)
+            if payload.model == ADAPTIVE_MODEL_ID
+            else _format_support_answer(result)
+        )
         prompt_tokens = len(query.split())
         completion_tokens = len(full_answer.split())
 

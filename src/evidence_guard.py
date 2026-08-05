@@ -422,7 +422,13 @@ def apply_entity_coverage_guard(
     return response
 
 
-def apply_diagnostic_scope_guard(response: Any, query: str, docs_context: str) -> Any:
+def apply_diagnostic_scope_guard(
+    response: Any,
+    query: str,
+    docs_context: str,
+    *,
+    information_mode: bool = False,
+) -> Any:
     """Avoid generic root-cause lists for self-diagnostic requests without evidence."""
     query_norm = (query or "").lower().replace("ё", "е")
     context_norm = (docs_context or "").lower().replace("ё", "е")
@@ -431,11 +437,19 @@ def apply_diagnostic_scope_guard(response: Any, query: str, docs_context: str) -
     if not asks_self_diagnostic or has_direct_evidence:
         return response
 
-    answer = (
-        "В найденных источниках нет прямого описания причин сообщения self-diagnostic. "
-        "Для предметного разбора нужны точный текст сообщения, модель контроллера и фрагмент журнала; "
-        "без них не следует отключать проверки или менять системные параметры."
-    )
+    if information_mode:
+        answer = (
+            "В найденных источниках нет прямого описания причин сообщения self-diagnostic. "
+            "Точный текст сообщения, модель контроллера и фрагмент журнала в найденных материалах "
+            "отсутствуют; поэтому связь сообщения с конкретной причиной или системным параметром "
+            "не подтверждена."
+        )
+    else:
+        answer = (
+            "В найденных источниках нет прямого описания причин сообщения self-diagnostic. "
+            "Для предметного разбора нужны точный текст сообщения, модель контроллера и фрагмент журнала; "
+            "без них не следует отключать проверки или менять системные параметры."
+        )
     response.docs_answer = answer
     response.draft_private_comment = answer
     response.evidence_notes = []
