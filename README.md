@@ -36,6 +36,20 @@ Agentic RAG публикуется API-сервером как модель `reg
 
 Модель `reglab-ai-adaptive` работает как умный поиск, а не как инженер ТП: документация считается основным источником фактов и процедур, тикеты показываются только как исторический опыт с формулировками «ситуация / как было решено / почему похоже». Советы модели, диагностические чек-листы и уточняющие вопросы в итоговый ответ не выводятся.
 
+## Диагностический отчёт retrieval
+
+`scripts/generate_rag_debug_report.py` запускает настоящий production retrieval и сохраняет самодостаточный локальный HTML вместе с полным JSON. В отчёт входят исходный и обогащённый запросы, multi-query planner, Qdrant hybrid candidates, RRF, reranker, parent-документы, исключённые источники, все metadata, точные контексты и отрендеренный prompt. Флаг `--generate` дополнительно сохраняет сырой ответ LLM, результат после guards, итоговый текст и provider token usage.
+
+```powershell
+& C:\Users\e.valov\AppData\Local\anaconda3\envs\rag_langchain\python.exe scripts\generate_rag_debug_report.py `
+  --query "ошибка download denied при загрузке проекта" `
+  --profiles adaptive,deep,agentic `
+  --compare reranker,multi_query `
+  --generate
+```
+
+Пакет вопросов принимается через `--input questions.json`, `questions.jsonl` или обычный TXT. Для произвольных сравнений используется повторяемый аргумент, например `--variant no-rerank:reranker=off` и `--variant no-mq:multi_query=off`. Без `--generate` отключается только финальный synthesis; включённые multi-query planner и agentic reflection по-прежнему могут обращаться к LLM.
+
 ## Типовые команды
 
 ```bash
