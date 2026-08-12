@@ -1,11 +1,15 @@
-# Hermes article agent
+# Hermes RAG: поиск и статьи
 
 Полное руководство по установке, моделям, запуску, результатам и диагностике:
 [HERMES_RAG_GUIDE.md](HERMES_RAG_GUIDE.md).
 
-Локальный stdio-MCP для Hermes Agent. Hermes самостоятельно планирует исследование и вызывает
-поиск по обеим сторонам существующего `DualRetriever`. Кластеризация предоставляет только темы и
-контрольный список тикетов.
+Hermes сам планирует поиск по обеим сторонам `DualRetriever`. Доступны два режима:
+
+- `reglab-ai-hermes-search` в OpenWebUI — один вопрос, итеративный поиск, один ответ;
+- `run_article.ps1` — глубокое исследование и локальный черновик статьи EVA.
+
+В обоих режимах память предыдущего диалога не используется. Кластеризация даёт статейному
+режиму темы и контрольные ID, но не считается доказательством.
 
 ## Установка
 
@@ -16,10 +20,10 @@ Hermes Agent на Windows устанавливается отдельно по �
 & C:\Users\e.valov\AppData\Local\anaconda3\envs\rag_langchain\python.exe -m pip install -r ticket_clustering\hermes_agent\requirements-hermes.txt
 ```
 
-На этой машине сервер зарегистрирован как `reglab_articles` в
-`%LOCALAPPDATA%\hermes\config.yaml`. Для другой установки перенесите секцию из
-`hermes_config.example.yaml` в активный Hermes `config.yaml`. Qdrant должен быть доступен, а пути
-в основном `config.yaml` — указывать на активные коллекции и parent-store.
+На новой машине создайте локальный `config.yaml` из `config.example.yaml`, затем запустите
+`configure_provider.py`: он сам добавит в пользовательский конфиг Hermes все нужные toolset.
+Qdrant должен быть доступен, а пути в основном проектном `config.yaml` — указывать на
+активные коллекции и parent-store.
 
 Для исследования передайте Hermes содержимое `ARTICLE_AGENT_PROMPT.md` и `cluster_id`, задайте
 свободную тему либо попросите выбрать тему через `list_article_candidates`.
@@ -99,10 +103,11 @@ Yandex API key и folder ID читаются из `.env`; секреты в `con
 поиск до насыщения источников. Минимальная пауза после MCP-вызова задаётся
 `agent_call_pacing_seconds` в `config.yaml` и сейчас равна 1 секунде.
 
-Скрипт явно включает только `mcp-reglab_articles`: память, веб, терминал и произвольные файловые
+Скрипт явно включает только `reglab_articles`: память, веб, терминал и произвольные файловые
 инструменты Hermes в этой сессии недоступны. Запись возможна только через контролируемый
 `save_article_draft` в папку `output/`.
 
 Черновики сохраняются только в `ticket_clustering/hermes_agent/output/`. MCP не меняет Qdrant,
-аналитическую SQLite или production RAG. Модели embeddings и reranker загружаются один раз за
-время жизни MCP-процесса; параллельный запуск отдельного API-сервера создаст второй экземпляр.
+аналитическую SQLite или production RAG. Отдельный статейный MCP на порту 8765 загружает свои
+embedding и reranker. Профиль OpenWebUI `reglab-ai-hermes-search`, наоборот, использует уже загруженный
+production `RAGEngine` и не создаёт вторую копию моделей.

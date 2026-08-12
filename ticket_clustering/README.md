@@ -1,6 +1,8 @@
 # Ticket clustering
 
 Изолированный экспериментальный контур поиска тематических подкластеров в обращениях ТП.
+Готовые кандидаты могут использоваться как seed для Hermes; этот контур описан в
+[hermes_agent/HERMES_RAG_GUIDE.md](hermes_agent/HERMES_RAG_GUIDE.md).
 
 Контур читает `ticket_analytics.sqlite3` в режиме SQLite `mode=ro`. Он не изменяет CSV, Qdrant,
 основную аналитическую базу или production RAG. Все кэши и отчёты записываются только в локальные

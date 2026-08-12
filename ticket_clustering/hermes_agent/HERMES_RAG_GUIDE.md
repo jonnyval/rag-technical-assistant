@@ -1,8 +1,13 @@
 # Агентный RAG через Hermes: руководство оператора
 
-Это руководство описывает исследовательский контур, который создаёт черновики статей базы
-знаний RegLab через Hermes Agent. Он не является профилем OpenWebUI и запускается отдельной
-PowerShell-командой.
+Это руководство описывает два контура Hermes Agent:
+
+1. `reglab-ai-hermes-search` — stateless-поиск в OpenWebUI через общий `api_server.py`;
+2. отдельный исследовательский контур, который создаёт черновики статей EVA и
+   запускается PowerShell-командой.
+
+Оба режима игнорируют историю предыдущих вопросов. Поисковый профиль не сохраняет файлы;
+статейный режим может записывать только локальные seed, черновики и досье.
 
 ## 1. Что делает режим
 
@@ -43,11 +48,16 @@ MCP не изменяет Qdrant, исходные документы или а�
 
 | Файл | Назначение |
 |---|---|
-| `config.yaml` | Активная LLM, endpoints, retrieval-лимиты и пути к данным |
+| `config.example.yaml` | Безопасный пример локального конфига |
+| `config.yaml` | Локальная активная LLM, endpoints, retrieval-лимиты и пути; исключён из Git |
 | `ARTICLE_AGENT_PROMPT.md` | Правила исследования, доказательности и формат EVA |
+| `SEARCH_AGENT_PROMPT.md` | Постоянные правила обычного агентного поиска |
 | `run_article.ps1` | Основной запуск темы или кластера |
+| `run_search.ps1` | Один поисковый запрос без OpenWebUI |
 | `configure_provider.py` | Просмотр, проверка и переключение LLM-профилей |
 | `server.py` | MCP-инструменты, доступные Hermes |
+| `api_mcp.py` | Search-only MCP, смонтированный в production API |
+| `search_runner.py` | Stateless one-shot запуск Hermes для OpenWebUI |
 | `service.py` | Поиск, сериализация результатов, seed и сохранение артефактов |
 | `hermes_config.example.yaml` | Пример регистрации MCP в Hermes |
 | `output/` | Статьи, досье, манифесты и ручные seed |
@@ -89,8 +99,10 @@ C:\Users\e.valov\AppData\Local\anaconda3\envs\rag_langchain\python.exe
   -m pip install -r ticket_clustering\hermes_agent\requirements-hermes.txt
 ```
 
-На новой машине зарегистрируйте `reglab_articles` в пользовательском конфиге Hermes по примеру
-из `ticket_clustering/hermes_agent/hermes_config.example.yaml`.
+На новой машине скопируйте `config.example.yaml` в локальный `config.yaml`, заполните endpoint
+модели и запустите `configure_provider.py`. Скрипт сам зарегистрирует в Hermes наборы
+`reglab_articles`, `reglab_search` и `reglab_search_local`. `hermes_config.example.yaml` нужен как
+справочный пример схемы, а не как обязательный ручной шаг.
 
 Быстрые проверки:
 
