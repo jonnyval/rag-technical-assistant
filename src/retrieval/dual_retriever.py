@@ -12,7 +12,7 @@ dual_retriever.py — параллельный поиск по двум БД (д
 
 import pickle
 import logging
-from typing import List, Optional, Any, Dict
+from typing import Callable, List, Optional, Any, Dict
 
 from pydantic import Field
 from langchain_core.retrievers import BaseRetriever
@@ -131,6 +131,16 @@ class DualRetriever(BaseRetriever):
         except Exception as e:
             log.error(f"❌ Ошибка поиска в [{db_label}]: {e}", exc_info=True)
             return []
+
+    @staticmethod
+    def _filter_candidates(
+        children: List[Document],
+        candidate_filter: Optional[Callable[[List[Document]], List[Document]]],
+    ) -> List[Document]:
+        """Apply deterministic evidence filters before fusion and final selection."""
+        if candidate_filter is None or not children:
+            return children
+        return list(candidate_filter(children))
 
     def _fetch_parents(
         self,
@@ -404,14 +414,25 @@ class DualRetriever(BaseRetriever):
         use_reranker: bool = True,
         rrf_k: int = 60,
         candidate_limit: int = 60,
+        candidate_filter: Optional[Callable[[List[Document]], List[Document]]] = None,
     ) -> List[Document]:
         """RAG-Fusion over documentation, followed by one shared rerank pass."""
         unique_queries = list(dict.fromkeys(query.strip() for query in queries if query and query.strip()))
         if len(unique_queries) <= 1:
-            return self.retrieve_docs(rerank_query, use_reranker=use_reranker)
+            return self.retrieve_docs(
+                rerank_query,
+                use_reranker=use_reranker,
+                candidate_filter=candidate_filter,
+            )
         k = self.docs_retriever.search_kwargs.get("k", 30)
         children = self._fuse_multi_query_children(
-            [self._search_children(self.docs_retriever, query, k, False, "docs") for query in unique_queries],
+            [
+                self._filter_candidates(
+                    self._search_children(self.docs_retriever, query, k, False, "docs"),
+                    candidate_filter,
+                )
+                for query in unique_queries
+            ],
             queries=unique_queries,
             rrf_k=rrf_k,
             candidate_limit=candidate_limit,
@@ -447,6 +468,7 @@ class DualRetriever(BaseRetriever):
         use_reranker: bool = True,
         rrf_k: int = 60,
         candidate_limit: int = 60,
+        candidate_filter: Optional[Callable[[List[Document]], List[Document]]] = None,
     ) -> List[Document]:
         """RAG-Fusion over support tickets, followed by one shared rerank pass."""
         unique_queries = list(dict.fromkeys(query.strip() for query in queries if query and query.strip()))
@@ -456,10 +478,17 @@ class DualRetriever(BaseRetriever):
                 final_limit=final_limit,
                 child_k=child_k,
                 use_reranker=use_reranker,
+                candidate_filter=candidate_filter,
             )
         k = child_k or self.tickets_retriever.search_kwargs.get("k", 30)
         children = self._fuse_multi_query_children(
-            [self._search_children(self.tickets_retriever, query, k, False, "tickets") for query in unique_queries],
+            [
+                self._filter_candidates(
+                    self._search_children(self.tickets_retriever, query, k, False, "tickets"),
+                    candidate_filter,
+                )
+                for query in unique_queries
+            ],
             queries=unique_queries,
             rrf_k=rrf_k,
             candidate_limit=candidate_limit,
@@ -483,7 +512,13 @@ class DualRetriever(BaseRetriever):
         tickets = self._fetch_parents(self.tickets_retriever, top_children, "tickets")
         tickets.sort(key=lambda document: document.metadata.get("rerank_score", 0), reverse=True)
         return tickets
-    def retrieve_docs(self, query: str, *, use_reranker: bool = True) -> List[Document]:
+    def retrieve_docs(
+        self,
+        query: str,
+        *,
+        use_reranker: bool = True,
+        candidate_filter: Optional[Callable[[List[Document]], List[Document]]] = None,
+    ) -> List[Document]:
         """Ищет только по коллекции документации без фильтра по оборудованию."""
         k = self.docs_retriever.search_kwargs.get("k", 30)
         children = self._search_children(
@@ -493,6 +528,7 @@ class DualRetriever(BaseRetriever):
             apply_filter=False,
             db_label="docs",
         )
+        children = self._filter_candidates(children, candidate_filter)
         top_children = self._rank_children(query, children, use_reranker=use_reranker)
         docs = self._fetch_parents(self.docs_retriever, top_children, "docs")
         docs.sort(key=lambda x: x.metadata.get("rerank_score", 0), reverse=True)
@@ -504,6 +540,7 @@ class DualRetriever(BaseRetriever):
         final_limit: int | None = None,
         child_k: int | None = None,
         use_reranker: bool = True,
+        candidate_filter: Optional[Callable[[List[Document]], List[Document]]] = None,
     ) -> List[Document]:
         """Ищет только по коллекции обращений технической поддержки."""
         k = child_k or self.tickets_retriever.search_kwargs.get("k", 30)
@@ -514,6 +551,7 @@ class DualRetriever(BaseRetriever):
             apply_filter=False,
             db_label="tickets",
         )
+        children = self._filter_candidates(children, candidate_filter)
         result_limit = final_limit or self.top_k_final
         ranked_children = self._rank_children(
             query,

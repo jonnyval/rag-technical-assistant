@@ -7,6 +7,7 @@ from typing import Any, List
 
 from src.agentic.schemas import AgentTraceStep
 from src.context_formatting import is_ticket_document
+from src.evidence_guard import filter_documents_by_requested_series
 
 
 def _source_keys(documents: List[Any]) -> List[str]:
@@ -54,12 +55,19 @@ class AgenticRetrievalTools:
         rerank_query: str,
         round_index: int,
         use_reranker: bool = True,
+        source_query: str | None = None,
     ):
         started = time.perf_counter()
+        candidate_filter = (
+            lambda candidates: filter_documents_by_requested_series(source_query, candidates)
+        ) if source_query else None
+        retrieval_options = {"use_reranker": use_reranker}
+        if candidate_filter is not None:
+            retrieval_options["candidate_filter"] = candidate_filter
         documents = self.engine._retrieve_docs_for_queries(
             queries,
             rerank_query,
-            use_reranker=use_reranker,
+            **retrieval_options,
         )
         elapsed = round(time.perf_counter() - started, 3)
         return documents, self._multi_trace_steps(
@@ -78,16 +86,25 @@ class AgenticRetrievalTools:
         round_index: int,
         limit: int = 8,
         child_k: int = 60,
+        source_query: str | None = None,
     ):
         started = time.perf_counter()
+        candidate_filter = (
+            lambda candidates: filter_documents_by_requested_series(source_query, candidates)
+        ) if source_query else None
+        retrieval_options = {
+            "final_limit": limit,
+            "child_k": child_k,
+            "use_reranker": True,
+        }
+        if candidate_filter is not None:
+            retrieval_options["candidate_filter"] = candidate_filter
         documents = [
             document
             for document in self.engine._retrieve_tickets_for_queries(
                 queries,
                 rerank_query,
-                final_limit=limit,
-                child_k=child_k,
-                use_reranker=True,
+                **retrieval_options,
             )
             if is_ticket_document(document)
         ]
@@ -99,9 +116,23 @@ class AgenticRetrievalTools:
             documents=documents,
             elapsed_seconds=elapsed,
         )
-    def search_docs(self, query: str, *, round_index: int, use_reranker: bool = True):
+    def search_docs(
+        self,
+        query: str,
+        *,
+        round_index: int,
+        use_reranker: bool = True,
+        source_query: str | None = None,
+    ):
         started = time.perf_counter()
-        documents = self.engine.retriever.retrieve_docs(query, use_reranker=use_reranker)
+        candidate_filter = (
+            lambda candidates: filter_documents_by_requested_series(source_query, candidates)
+        ) if source_query else None
+        documents = self.engine.retriever.retrieve_docs(
+            query,
+            use_reranker=use_reranker,
+            candidate_filter=candidate_filter,
+        )
         trace = AgentTraceStep(
             round_index=round_index,
             phase="tool",
@@ -113,8 +144,19 @@ class AgenticRetrievalTools:
         )
         return documents, trace
 
-    def search_tickets(self, query: str, *, round_index: int, limit: int = 8, child_k: int = 60):
+    def search_tickets(
+        self,
+        query: str,
+        *,
+        round_index: int,
+        limit: int = 8,
+        child_k: int = 60,
+        source_query: str | None = None,
+    ):
         started = time.perf_counter()
+        candidate_filter = (
+            lambda candidates: filter_documents_by_requested_series(source_query, candidates)
+        ) if source_query else None
         documents = [
             document
             for document in self.engine.retriever.retrieve_tickets(
@@ -122,6 +164,7 @@ class AgenticRetrievalTools:
                 final_limit=limit,
                 child_k=child_k,
                 use_reranker=True,
+                candidate_filter=candidate_filter,
             )
             if is_ticket_document(document)
         ]

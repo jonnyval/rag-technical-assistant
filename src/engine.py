@@ -2,7 +2,7 @@ import re
 import time
 import warnings
 from threading import Lock
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Literal, Optional
 
 warnings.filterwarnings("ignore")
 
@@ -262,6 +262,35 @@ class EvidenceNote(BaseModel):
     comment: str = Field(default="", description="Оговорка, если источник подтверждает тезис не напрямую")
 
 
+def _normalize_confidence_value(value: Any) -> str:
+    """Normalize provider confidence variants to the public low/medium/high scale."""
+    if value is None or isinstance(value, bool):
+        return "medium"
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"low", "medium", "high"}:
+            return normalized
+        try:
+            value = float(normalized.replace(",", "."))
+        except (TypeError, ValueError):
+            return "medium"
+    try:
+        score = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return "medium"
+    if score != score or score < 0:
+        return "medium"
+    if 1 < score <= 100:
+        score /= 100
+    if score > 1:
+        return "medium"
+    if score >= 0.75:
+        return "high"
+    if score >= 0.45:
+        return "medium"
+    return "low"
+
+
 class SupportPrivateResponse(BaseModel):
     """Приватная подсказка ИИ для сотрудника техподдержки."""
     user_intent: str = Field(default="", description="Что хочет выяснить или выполнить инженер ТП")
@@ -273,7 +302,7 @@ class SupportPrivateResponse(BaseModel):
     internal_notes: List[str] = Field(default_factory=list, description="Внутренний SGR-аудит и проверки для инженера техподдержки")
     missing_context: str = Field(default="Не указано", description="Каких данных не хватает для уверенного ответа")
     draft_private_comment: str = Field(description="Готовый приватный комментарий для сотрудника ТП в Markdown")
-    confidence: str = Field(default="medium", description="low | medium | high")
+    confidence: Literal["low", "medium", "high"] = Field(default="medium", description="low | medium | high")
     doc_sources: List[SourceReference] = Field(default_factory=list, description="Документные источники, добавленные кодом после поиска")
     ticket_sources: List[SourceReference] = Field(default_factory=list, description="Источники похожих обращений, добавленные кодом после поиска")
 
@@ -299,6 +328,11 @@ class SupportPrivateResponse(BaseModel):
         if isinstance(value, list):
             return [str(item) for item in value if item is not None and str(item).strip()]
         return [str(value)]
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def normalize_confidence(cls, value):
+        return _normalize_confidence_value(value)
 
 class AdaptiveSimilarTicketSummary(SimilarTicketSummary):
     """Accept common provider field names without losing retrieved ticket facts."""
@@ -368,7 +402,7 @@ class WikiChatResponse(BaseModel):
     missing_context: str = Field(default="", description="Russian description of direct information not found in retrieved sources")
     source_limitations: List[str] = Field(default_factory=list, description="Weak matches, model/version mismatches, or missing direct evidence, in Russian")
     final_answer: str = Field(description="Final Russian Markdown wiki answer for the user")
-    confidence: str = Field(default="medium", description="low | medium | high")
+    confidence: Literal["low", "medium", "high"] = Field(default="medium", description="low | medium | high")
     doc_sources: List[SourceReference] = Field(default_factory=list, description="Documentation sources attached by code after retrieval")
     ticket_sources: List[SourceReference] = Field(default_factory=list, description="Ticket sources attached by code after retrieval")
 
@@ -386,13 +420,18 @@ class WikiChatResponse(BaseModel):
         return [str(value)]
 
 
-    @field_validator("user_intent", "docs_answer", "missing_context", "final_answer", "confidence", mode="before")
+    @field_validator("user_intent", "docs_answer", "missing_context", "final_answer", mode="before")
     @classmethod
     def normalize_text_fields(cls, value):
         """Replace null and non-string scalar values with safe strings."""
         if value is None:
             return ""
         return str(value)
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def normalize_confidence(cls, value):
+        return _normalize_confidence_value(value)
 
 
 class MultiQueryPlan(BaseModel):
@@ -1163,6 +1202,28 @@ Detected module context:
             for ticket in tickets
         ]
         return not scores or max(scores) < 0.65
+
+    def _adaptive_doc_results_are_weak(
+        self,
+        documents: List[Any],
+        *,
+        query_count: int,
+    ) -> bool:
+        """Detect a collapsed or weak RRF result before paying for doc reranking."""
+        target = min(3, max(1, int(self.profile_config.get("top_k_final", 4))))
+        if len(documents) < target:
+            return True
+        if query_count <= 1:
+            return False
+
+        scores = [
+            float((getattr(document, "metadata", {}) or {}).get("rerank_score", 0.0) or 0.0)
+            for document in documents
+        ]
+        rrf_k, _ = self._multi_query_options()
+        # A strong RRF winner should be supported by at least two query variants.
+        minimum_multi_query_score = 1.5 / (rrf_k + 1)
+        return not scores or max(scores) < minimum_multi_query_score
     @staticmethod
     def _multi_query_options() -> tuple[int, int]:
         config = settings.multi_query_config
@@ -1304,17 +1365,59 @@ Detected module context:
         if len(shared_queries) > 1:
             log.info("Multi-Query RAG-Fusion: %s search variants", len(shared_queries))
         return shared_queries, list(shared_queries)
-    def _retrieve_docs_for_queries(self, queries: List[str], retrieval_query: str, *, use_reranker: bool) -> List:
+    def _retrieve_docs_for_queries(
+        self,
+        queries: List[str],
+        retrieval_query: str,
+        *,
+        use_reranker: bool,
+        candidate_filter: Callable[[List[Any]], List[Any]] | None = None,
+    ) -> List:
         if len(queries) <= 1:
-            return self.retriever.retrieve_docs(retrieval_query, use_reranker=use_reranker)
+            return self.retriever.retrieve_docs(
+                retrieval_query,
+                use_reranker=use_reranker,
+                candidate_filter=candidate_filter,
+            )
         rrf_k, candidate_limit = self._multi_query_options()
-        return self.retriever.retrieve_docs_multi_query(queries, rerank_query=retrieval_query, use_reranker=use_reranker, rrf_k=rrf_k, candidate_limit=candidate_limit)
+        return self.retriever.retrieve_docs_multi_query(
+            queries,
+            rerank_query=retrieval_query,
+            use_reranker=use_reranker,
+            rrf_k=rrf_k,
+            candidate_limit=candidate_limit,
+            candidate_filter=candidate_filter,
+        )
 
-    def _retrieve_tickets_for_queries(self, queries: List[str], retrieval_query: str, *, final_limit: int | None, child_k: int | None, use_reranker: bool) -> List:
+    def _retrieve_tickets_for_queries(
+        self,
+        queries: List[str],
+        retrieval_query: str,
+        *,
+        final_limit: int | None,
+        child_k: int | None,
+        use_reranker: bool,
+        candidate_filter: Callable[[List[Any]], List[Any]] | None = None,
+    ) -> List:
         if len(queries) <= 1:
-            return self.retriever.retrieve_tickets(retrieval_query, final_limit=final_limit, child_k=child_k, use_reranker=use_reranker)
+            return self.retriever.retrieve_tickets(
+                retrieval_query,
+                final_limit=final_limit,
+                child_k=child_k,
+                use_reranker=use_reranker,
+                candidate_filter=candidate_filter,
+            )
         rrf_k, candidate_limit = self._multi_query_options()
-        return self.retriever.retrieve_tickets_multi_query(queries, rerank_query=retrieval_query, final_limit=final_limit, child_k=child_k, use_reranker=use_reranker, rrf_k=rrf_k, candidate_limit=max(candidate_limit, child_k or 0))
+        return self.retriever.retrieve_tickets_multi_query(
+            queries,
+            rerank_query=retrieval_query,
+            final_limit=final_limit,
+            child_k=child_k,
+            use_reranker=use_reranker,
+            rrf_k=rrf_k,
+            candidate_limit=max(candidate_limit, child_k or 0),
+            candidate_filter=candidate_filter,
+        )
     def process_support_ticket(self, query: str) -> SupportPrivateResponse:
         """Builds a private support hint with separate docs and ticket retrieval."""
         if not query:
@@ -1360,14 +1463,39 @@ Detected module context:
                 detected_modules,
                 module_context,
             )
+            series_candidate_filter = lambda candidates: filter_documents_by_requested_series(
+                query,
+                candidates,
+            )
             docs = merge_documents(
                 exact_module_docs,
                 self._retrieve_docs_for_queries(
                     doc_retrieval_queries,
                     retrieval_query,
                     use_reranker=not adaptive_mode,
+                    candidate_filter=series_candidate_filter,
                 ),
             )
+            if (
+                adaptive_mode
+                and self.retriever.reranker_model is not None
+                and self._adaptive_doc_results_are_weak(
+                    docs,
+                    query_count=len(doc_retrieval_queries),
+                )
+            ):
+                log.info(
+                    "Adaptive documentation pool is weak or collapsed; enabling reranker"
+                )
+                docs = merge_documents(
+                    exact_module_docs,
+                    self._retrieve_docs_for_queries(
+                        doc_retrieval_queries,
+                        retrieval_query,
+                        use_reranker=True,
+                        candidate_filter=series_candidate_filter,
+                    ),
+                )
             if settings.second_db_name == settings.active_db_name:
                 log.warning(
                     "Ticket retrieval disabled: second_db points to the docs backend (%s)",
@@ -1398,6 +1526,7 @@ Detected module context:
                         final_limit=initial_ticket_limit,
                         child_k=initial_ticket_k,
                         use_reranker=not adaptive_mode or adaptive_incident,
+                        candidate_filter=series_candidate_filter,
                     )
                     if is_ticket_document(doc)
                 ]
@@ -1410,6 +1539,7 @@ Detected module context:
                             final_limit=8,
                             child_k=80,
                             use_reranker=True,
+                            candidate_filter=series_candidate_filter,
                         )
                         if is_ticket_document(doc)
                     ]

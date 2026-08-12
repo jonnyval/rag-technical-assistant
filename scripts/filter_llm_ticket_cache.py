@@ -474,13 +474,14 @@ def decision_for_file(
     path: Path,
     docs: list[dict[str, Any]],
     args: argparse.Namespace,
+    input_dir: Path,
 ) -> tuple[str, str, list[dict[str, Any]], dict[str, Any]]:
     ticket_id = get_ticket_id(path, docs)
     first_meta = metadata_of(docs[0]) if docs else {}
     status = str(first_meta.get("status") or "")
 
     row_base = {
-        "file": str(path.relative_to(args.input_dir)),
+        "file": str(path.relative_to(input_dir)),
         "ticket_id": ticket_id,
         "status": status,
         "title": str(first_meta.get("page_title") or ""),
@@ -602,7 +603,12 @@ def main() -> None:
                 counts["drop"] += 1
                 continue
 
-            decision, reason, kept_docs, row_base = decision_for_file(path, docs, args)
+            decision, reason, kept_docs, row_base = decision_for_file(
+                path,
+                docs,
+                args,
+                input_dir,
+            )
             output_file = ""
             if decision == "keep":
                 seen_ticket_ids.add(ticket_id)

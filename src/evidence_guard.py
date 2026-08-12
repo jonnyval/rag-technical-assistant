@@ -374,20 +374,51 @@ def filter_documents_by_requested_series(query: str, documents: List[Any]) -> Li
         return documents
 
     result = []
+    dropped_count = 0
+    dropped_series = set()
     for document in documents or []:
         meta = getattr(document, "metadata", {}) or {}
-        source_text = " ".join([
-            str(meta.get("equipment_type") or ""),
+        identity_text = " ".join([
             str(meta.get("source_file") or ""),
             str(meta.get("page_title") or ""),
             str(meta.get("breadcrumb_raw") or ""),
+        ])
+        identity_series = {
+            item.upper()
+            for item in re.findall(r"\bR\d{3}S?\b", identity_text, flags=re.IGNORECASE)
+        }
+        equipment_series = {
+            item.upper()
+            for item in re.findall(
+                r"\bR\d{3}S?\b",
+                str(meta.get("equipment_type") or ""),
+                flags=re.IGNORECASE,
+            )
+        }
+        source_text = " ".join([
+            str(meta.get("equipment_type") or ""),
+            identity_text,
             str(getattr(document, "page_content", "") or "")[:6000],
         ])
         source_series = {item.upper() for item in re.findall(r"\bR\d{3}S?\b", source_text, flags=re.IGNORECASE)}
-        if source_series and not (source_series & requested):
-            log.info("EvidenceGuard: dropped cross-series source %s for requested=%s", source_series, requested)
+        incompatible_equipment = (
+            len(equipment_series) == 1
+            and not (equipment_series & requested)
+        )
+        incompatible_identity = identity_series and not (identity_series & requested)
+        incompatible_content = source_series and not (source_series & requested)
+        if incompatible_equipment or incompatible_identity or incompatible_content:
+            dropped_count += 1
+            dropped_series.update(equipment_series or identity_series or source_series)
             continue
         result.append(document)
+    if dropped_count:
+        log.info(
+            "EvidenceGuard: dropped %s cross-series candidates %s for requested=%s",
+            dropped_count,
+            dropped_series,
+            requested,
+        )
     return result
 
 

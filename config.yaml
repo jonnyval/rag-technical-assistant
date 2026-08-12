@@ -180,7 +180,7 @@ retrieval:
     structured_planner:
       # Раздельная декомпозиция запроса для документации и исторических тикетов.
       # Пока выключена: false сохраняет прежний общий список перефразирований.
-      enabled: false
+      enabled: true
       max_documentation_queries: 3
       max_ticket_queries: 3
       query_aware_rerank:

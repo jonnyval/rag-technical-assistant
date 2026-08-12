@@ -42,8 +42,19 @@ chroma_db/
 bm25_cache/
 qdrant_backup/
 drant_backup/
+qdrant_storage/
+.tmp/
 *.sqlite3
 *.db
+
+# Ticket clustering/Hermes runtime data and machine-local endpoints
+ticket_clustering/artifacts/
+ticket_clustering/reports/
+ticket_clustering/hermes_agent/config.yaml
+ticket_clustering/hermes_agent/output/
+ticket_clustering/hermes_agent/session_debug/
+ticket_clustering/hermes_agent/usage/
+Выгрузка обращений*.csv
 
 # Local copy/export folders
 папка для копирования в нейронку/

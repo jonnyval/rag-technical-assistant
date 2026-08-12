@@ -157,6 +157,7 @@ class AgenticController:
                 rerank_query=retrieval_query,
                 round_index=0,
                 use_reranker=True,
+                source_query=query,
             )
             trace.extend(steps)
             tool_calls += 1
@@ -166,6 +167,7 @@ class AgenticController:
                     ticket_initial_queries,
                     rerank_query=retrieval_query,
                     round_index=0,
+                    source_query=query,
                 )
                 trace.extend(steps)
                 tool_calls += 1
@@ -174,24 +176,38 @@ class AgenticController:
                 retrieval_query,
                 round_index=0,
                 use_reranker=True,
+                source_query=query,
             )
             trace.append(step)
             tool_calls += 1
             tickets: List[Any] = []
             if tickets_enabled and tool_calls < self.max_tool_calls:
-                tickets, step = self.tools.search_tickets(retrieval_query, round_index=0)
+                tickets, step = self.tools.search_tickets(
+                    retrieval_query,
+                    round_index=0,
+                    source_query=query,
+                )
                 trace.append(step)
                 tool_calls += 1
         if exact_anchors and tool_calls < self.max_tool_calls:
             requested_series = sorted(set(re.findall(r"\bR\d{3}S?\b", query, flags=re.IGNORECASE)))
             exact_query = self._build_exact_identifier_query(query, exact_anchors, requested_series)
-            incoming, step = self.tools.search_docs(exact_query, round_index=0, use_reranker=True)
+            incoming, step = self.tools.search_docs(
+                exact_query,
+                round_index=0,
+                use_reranker=True,
+                source_query=query,
+            )
             step.reason = "deterministic exact-identifier search"
             trace.append(step)
             tool_calls += 1
             docs = merge_documents(incoming, docs)
             if tickets_enabled and tool_calls < self.max_tool_calls:
-                incoming, step = self.tools.search_tickets(exact_query, round_index=0)
+                incoming, step = self.tools.search_tickets(
+                    exact_query,
+                    round_index=0,
+                    source_query=query,
+                )
                 step.reason = "deterministic exact-identifier ticket search"
                 trace.append(step)
                 tool_calls += 1
@@ -262,7 +278,12 @@ class AgenticController:
                 if tool_calls >= self.max_tool_calls or time.perf_counter() >= deadline:
                     break
                 focused = build_module_enriched_query(followup, modules)
-                incoming, step = self.tools.search_docs(focused, round_index=round_index, use_reranker=True)
+                incoming, step = self.tools.search_docs(
+                    focused,
+                    round_index=round_index,
+                    use_reranker=True,
+                    source_query=query,
+                )
                 step.reason = "documentation follow-up requested by evidence planner"
                 trace.append(step)
                 tool_calls += 1
@@ -272,7 +293,11 @@ class AgenticController:
                 if not tickets_enabled or tool_calls >= self.max_tool_calls or time.perf_counter() >= deadline:
                     break
                 focused = build_module_enriched_query(followup, modules)
-                incoming, step = self.tools.search_tickets(focused, round_index=round_index)
+                incoming, step = self.tools.search_tickets(
+                    focused,
+                    round_index=round_index,
+                    source_query=query,
+                )
                 step.reason = "ticket follow-up requested by evidence planner"
                 trace.append(step)
                 tool_calls += 1

@@ -10,7 +10,13 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.context_formatting import SourceReference
-from src.engine import MultiQueryPlan, RAGEngine, RoundRobinFallbackRunnable
+from src.engine import (
+    AdaptiveInformationResponse,
+    MultiQueryPlan,
+    RAGEngine,
+    RoundRobinFallbackRunnable,
+    WikiChatResponse,
+)
 from src.evidence_guard import (
     apply_response_provenance, apply_transformation_evidence_guard,
     apply_entity_coverage_guard, apply_diagnostic_scope_guard,
@@ -25,6 +31,21 @@ def test_product_filter_keeps_exact_series() -> None:
         None, "как выполнить сброс R500?", [], [r500, r500s]
     )
     assert result == [r500]
+
+
+def test_numeric_confidence_is_normalized_for_structured_responses() -> None:
+    adaptive = AdaptiveInformationResponse.model_validate({
+        "docs_answer": "Факт [D1]",
+        "draft_private_comment": "Факт [D1]",
+        "confidence": 0.9,
+    })
+    assert adaptive.confidence == "high"
+
+    wiki = WikiChatResponse.model_validate({
+        "final_answer": "Факт [D1]",
+        "confidence": "0,5",
+    })
+    assert wiki.confidence == "medium"
 
 
 def test_provenance_removes_unknown_sources() -> None:
@@ -75,6 +96,42 @@ def test_series_filter_drops_r500_for_r400_request() -> None:
     r500 = SimpleNamespace(metadata={"equipment_type": "R500"}, page_content="R500 reset")
     result = filter_documents_by_requested_series("как сделать сброс R400?", [r400, r500])
     assert result == [r400]
+
+
+def test_series_filter_prefers_specific_source_identity_over_broad_metadata() -> None:
+    r500s_ticket = SimpleNamespace(
+        metadata={
+            "equipment_type": "Regul R050, R100, R200, R400, R500, R600",
+            "source_file": "[RL-1] Сбой R500S.json",
+        },
+        page_content="Сбой резервирования",
+    )
+    assert filter_documents_by_requested_series("сброс R500", [r500s_ticket]) == []
+
+    conflicting_ticket = SimpleNamespace(
+        metadata={
+            "equipment_type": "Regul R500S",
+            "source_file": "[RL-2] Сбой R500 резервирование.json",
+        },
+        page_content="Сбой резервирования",
+    )
+    assert filter_documents_by_requested_series("сброс R500", [conflicting_ticket]) == []
+
+
+def test_adaptive_doc_reranker_policy_detects_collapsed_and_weak_rrf_pool() -> None:
+    engine = RAGEngine.__new__(RAGEngine)
+    engine.profile_config = {"top_k_final": 4}
+    collapsed = [
+        SimpleNamespace(metadata={"rerank_score": 0.04}),
+        SimpleNamespace(metadata={"rerank_score": 0.03}),
+    ]
+    assert engine._adaptive_doc_results_are_weak(collapsed, query_count=3)
+
+    weak_rrf = [SimpleNamespace(metadata={"rerank_score": 0.01}) for _ in range(3)]
+    assert engine._adaptive_doc_results_are_weak(weak_rrf, query_count=3)
+
+    strong_rrf = [SimpleNamespace(metadata={"rerank_score": 0.04}) for _ in range(3)]
+    assert not engine._adaptive_doc_results_are_weak(strong_rrf, query_count=3)
 
 
 def test_entity_and_diagnostic_guards_require_direct_scope() -> None:
@@ -169,9 +226,12 @@ def test_retry_policy_does_not_repeat_schema_errors() -> None:
 
 if __name__ == "__main__":
     test_product_filter_keeps_exact_series()
+    test_numeric_confidence_is_normalized_for_structured_responses()
     test_provenance_removes_unknown_sources()
     test_ascii_transformation_guard_rejects_lookalike_api()
     test_series_filter_drops_r500_for_r400_request()
+    test_series_filter_prefers_specific_source_identity_over_broad_metadata()
+    test_adaptive_doc_reranker_policy_detects_collapsed_and_weak_rrf_pool()
     test_entity_and_diagnostic_guards_require_direct_scope()
     test_structured_query_planner_separates_source_queries()
     test_legacy_multi_query_remains_shared()

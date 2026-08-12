@@ -21,6 +21,7 @@ from uuid import uuid4
 from fastapi import FastAPI, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.responses import StreamingResponse
+from starlette.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 import uvicorn
 
@@ -35,6 +36,11 @@ from src.context_formatting import (  # noqa: E402
     format_adaptive_search_body,
     format_chat_sources_footer,
 )
+from ticket_clustering.hermes_agent.api_mcp import (  # noqa: E402
+    http_app as hermes_mcp_http_app,
+    set_shared_engine as set_hermes_shared_engine,
+)
+from ticket_clustering.hermes_agent.search_runner import HermesSearchRunner  # noqa: E402
 try:
     from faq_pipeline.search.ticket_vector_search import (  # noqa: E402
         DEFAULT_INDEX_DIR,
@@ -61,10 +67,12 @@ CHAT_DEEP_MODEL_ID = "reglab-ai-chat-deep"
 DEEP_MODEL_ID = "reglab-ai-deep"
 ADAPTIVE_MODEL_ID = "reglab-ai-adaptive"
 AGENTIC_MODEL_ID = "reglab-ai-agentic"
+HERMES_SEARCH_MODEL_ID = "reglab-ai-hermes-search"
 MODEL_PROFILES = {
     DEEP_MODEL_ID: "deep",
     ADAPTIVE_MODEL_ID: "adaptive",
     AGENTIC_MODEL_ID: "deep",
+    HERMES_SEARCH_MODEL_ID: "deep",
 }
 API_VERSION = "1.2"
 DEFAULT_MAX_CONCURRENCY = 2
@@ -185,18 +193,24 @@ async def lifespan(app: FastAPI):
     }
     app.state.startup_error = None
     app.state.inference_semaphore = asyncio.Semaphore(_max_concurrency())
+    app.state.hermes_search_runner = HermesSearchRunner(
+        timeout_seconds=int(os.getenv("HERMES_SEARCH_TIMEOUT_SECONDS", "900"))
+    )
 
     try:
         log.info("Starting RegLab RAG API: initializing default deep RAGEngine...")
         app.state.rag_engine = await run_in_threadpool(RAGEngine, "deep")
         app.state.rag_engines["deep"] = app.state.rag_engine
+        set_hermes_shared_engine(app.state.rag_engine)
         log.info("RegLab RAG API is ready.")
     except Exception as exc:
         app.state.startup_error = str(exc)
         log.error("RAGEngine initialization failed: %s", exc, exc_info=True)
 
-    yield
+    async with hermes_mcp_http_app.router.lifespan_context(hermes_mcp_http_app):
+        yield
 
+    set_hermes_shared_engine(None)
     app.state.rag_engine = None
     app.state.rag_engines = {}
     app.state.agentic_rag = None
@@ -205,6 +219,17 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="RegLab RAG API", version=API_VERSION, lifespan=lifespan)
+app.mount("/hermes", hermes_mcp_http_app)
+
+
+@app.middleware("http")
+async def restrict_hermes_mcp_to_loopback(request: Request, call_next):
+    """The internal MCP is for the local Hermes subprocess, not network clients."""
+    if request.url.path.startswith("/hermes"):
+        client_host = request.client.host if request.client else ""
+        if client_host not in {"127.0.0.1", "::1", "localhost", "testclient"}:
+            return JSONResponse({"detail": "Hermes MCP is local-only"}, status_code=403)
+    return await call_next(request)
 
 
 def _request_id() -> str:
@@ -998,6 +1023,10 @@ async def list_models() -> dict:
             ADAPTIVE_MODEL_ID,
             "RegLab AI Adaptive: factual documentation search with historical ticket outcomes",
         ),
+        (
+            HERMES_SEARCH_MODEL_ID,
+            "RegLab AI Hermes Search: iterative stateless research over documentation and tickets",
+        ),
     ]
     if settings.agentic_rag_enabled:
         models.append(
@@ -1051,6 +1080,24 @@ async def chat_completions(request: Request, payload: ChatCompletionRequest) -> 
                 return await _ticket_search_completion(request, payload, request_id, query)
 
         engine = await _get_engine_for_model(request, payload.model)
+        if payload.model == HERMES_SEARCH_MODEL_ID:
+            runner: HermesSearchRunner = request.app.state.hermes_search_runner
+            log.info(
+                "Hermes search request request_id=%s model=%s query=%r",
+                request_id,
+                payload.model,
+                query[:120],
+            )
+            async with request.app.state.inference_semaphore:
+                full_answer, usage = await run_in_threadpool(runner.run, query)
+            log.info(
+                "Hermes search finished request_id=%s api_calls=%s input_tokens=%s output_tokens=%s",
+                request_id,
+                usage.get("api_calls", "unknown"),
+                usage.get("input_tokens", "unknown"),
+                usage.get("output_tokens", "unknown"),
+            )
+            return await _chat_answer_completion(payload, request_id, query, full_answer)
         if payload.model == AGENTIC_MODEL_ID:
             agentic_rag = await _get_agentic_rag(request, engine)
             log.info(

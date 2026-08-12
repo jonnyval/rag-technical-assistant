@@ -1,0 +1,44 @@
+mcp_servers:
+  reglab_articles:
+    url: "http://127.0.0.1:8765/mcp"
+    timeout: 600
+    connect_timeout: 120
+    idle_timeout_seconds: 0
+    supports_parallel_tool_calls: false
+    tools:
+      include:
+        - list_article_candidates
+        - get_article_seed
+        - create_research_seed
+        - search_documentation
+        - search_historical_tickets
+        - search_dual_retriever
+        - read_search_results
+        - get_cluster_tickets
+        - save_article_draft
+  reglab_search:
+    url: "http://127.0.0.1:8000/hermes/mcp"
+    timeout: 600
+    connect_timeout: 120
+    idle_timeout_seconds: 0
+    supports_parallel_tool_calls: false
+    tools:
+      include:
+        - search_documentation
+        - search_historical_tickets
+        - search_dual_retriever
+        - read_search_results
+        - get_cluster_tickets
+  reglab_search_local:
+    url: "http://127.0.0.1:8765/mcp"
+    timeout: 600
+    connect_timeout: 120
+    idle_timeout_seconds: 0
+    supports_parallel_tool_calls: false
+    tools:
+      include:
+        - search_documentation
+        - search_historical_tickets
+        - search_dual_retriever
+        - read_search_results
+        - get_cluster_tickets

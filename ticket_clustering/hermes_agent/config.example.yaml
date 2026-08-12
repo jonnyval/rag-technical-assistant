@@ -1,0 +1,45 @@
+candidate_report: "ticket_clustering/reports/baseline_reference_semantic_plus_entities.json"
+analytics_db: "analytics/tp_analyze/server_data/ticket_analytics.sqlite3"
+output_dir: "ticket_clustering/hermes_agent/output"
+rag_profile: "deep"
+agent_call_pacing_seconds: 1
+
+mcp:
+  api_search_url: "http://127.0.0.1:8000/hermes/mcp"
+  standalone_url: "http://127.0.0.1:8765/mcp"
+
+llm:
+  active: "tailscale_qwen"
+  profiles:
+    tailscale_qwen:
+      type: "ollama"
+      base_url: "http://your-tailscale-host:11434/v1"
+      model: "qwen3.6:27b-64k"
+      context_length: 65536
+      max_tokens: 4096
+      reasoning_effort: "none"
+    local_ollama:
+      type: "ollama"
+      base_url: "http://127.0.0.1:11434/v1"
+      model: "qwen3.6:27b-64k"
+      context_length: 65536
+      max_tokens: 4096
+      reasoning_effort: "none"
+    yandex_deepseek:
+      type: "yandex"
+      base_url: "https://ai.api.cloud.yandex.net/v1"
+      model: "deepseek-v4-flash"
+      context_length: 1048576
+      max_tokens: 4096
+      reasoning_effort: "low"
+      api_key_env: "YANDEX_API_KEY"
+      folder_id_env: "YANDEX_FOLDER_ID"
+
+search:
+  docs_limit: 5
+  tickets_limit: 7
+  tickets_child_k: 80
+  search_snippet_chars: 700
+  detail_content_chars: 5000
+  max_detail_results: 6
+  max_exact_tickets: 12

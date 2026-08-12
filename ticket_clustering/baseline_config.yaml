@@ -1,0 +1,90 @@
+source_db: "analytics/tp_analyze/server_data/ticket_analytics.sqlite3"
+category: "Справочное"
+strategy: "semantic+entities"
+
+embedding:
+  model: "Qwen/Qwen3-Embedding-0.6B"
+  device: "cuda"
+  batch_size: 64
+  local_files_only: true
+
+preprocessing:
+  min_chars: 4
+  min_tokens: 1
+  min_informativeness: 0.0
+
+neighbors:
+  max_cached_neighbors: 40
+  graph_neighbors: 20
+  similarity_threshold: 0.81
+  mutual_only: true
+  block_size: 256
+
+clustering:
+  algorithm: "louvain"
+  resolution: 3.0
+  seed: 42
+  min_unique_symptoms: 3
+  min_tickets: 3
+
+entities:
+  block_series_conflicts: true
+  bonuses:
+    series: 0.000
+    modules: 0.050
+    protocols: 0.040
+    components: 0.025
+    issue_types: 0.000
+  penalties:
+    unmatched_anchor: 0.020
+    protocol_conflict: 0.040
+    component_conflict: 0.015
+
+article_readiness:
+  min_tickets: 5
+  preferred_max_tickets: 100
+  absolute_max_tickets: 220
+  cohesion_floor: 0.80
+  cohesion_full: 0.88
+  specificity_floor: 0.62
+  specificity_full: 0.84
+  ready_threshold: 0.68
+  review_threshold: 0.48
+  min_topic_quality: 0.18
+  weak_components:
+    - astraide
+    - astraregul
+    - regul_rts
+    - codesys
+  actionable_issue_types:
+    - project_download
+    - synchronization
+    - licensing
+    - firmware
+    - performance
+    - diagnostics
+    - reset_backup
+  weights:
+    cohesion: 0.30
+    strong_anchor: 0.30
+    actionable_issue: 0.20
+    specificity: 0.10
+    size: 0.10
+
+subclustering:
+  enabled: true
+  statuses:
+    - review
+  min_parent_tickets: 15
+  min_parent_symptoms: 12
+  similarity_threshold: 0.83
+  resolution: 5.0
+  seed: 42
+  min_unique_symptoms: 3
+  min_tickets: 3
+  min_children: 2
+  min_node_coverage: 0.50
+
+report:
+  max_clusters: 1000
+  samples_per_cluster: 12
